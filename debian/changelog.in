@@ -1,4 +1,4 @@
-scst (%{scst_version}) unstable; urgency=medium
+scst (%{scst_version}~truenas+1) bullseye-truenas-unstable; urgency=medium
 
   * Initial release.
 
