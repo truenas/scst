@@ -2,6 +2,8 @@
 # See debhelper(7) (uncomment to enable)
 # output every command that modifies files on the build system.
 export DH_VERBOSE = 1
+export KDIR = /lib/modules/5.4.0-2-amd64
+export KVER = 5.4.0-2-amd64
 
 
 # see FEATURE AREAS in dpkg-buildflags(1)
@@ -76,12 +78,15 @@ install:
 	mv "$(DESTDIR)"/usr/man "$(DESTDIR)"/usr/share/man &&		\
 	dh_install &&							\
 	dh_installman &&						\
+	dh_installdocs &&						\
 	dh_installchangelogs &&						\
+	dh_lintian &&							\
 	dh_compress &&							\
 	dh_fixperms &&							\
 	dh_strip &&							\
 	dh_makeshlibs &&						\
 	dh_shlibdeps &&							\
+	dh_installdebconf &&						\
 	dh_installdeb &&						\
 	dh_gencontrol &&						\
 	dh_md5sums &&							\
