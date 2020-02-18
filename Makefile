@@ -412,13 +412,13 @@ dpkg: ../scst_$(VERSION).orig.tar.gz
 	sed 's/%{scst_version}/$(VERSION)/'				\
 	  <debian/scst.dkms.in >debian/scst.dkms &&			\
 	output_files=(							\
-		../*_$(VERSION)-$(DEBIAN_REVISION)_*.deb		\
-		../*_$(VERSION)-$(DEBIAN_REVISION)_*.ddeb		\
-		../scst_$(VERSION)-$(DEBIAN_REVISION).debian.tar.[gx]z	\
-		../scst_$(VERSION)-$(DEBIAN_REVISION).dsc		\
-		../scst_$(VERSION)-$(DEBIAN_REVISION)_amd64.build	\
-		../scst_$(VERSION)-$(DEBIAN_REVISION)_amd64.buildinfo	\
-		../scst_$(VERSION)-$(DEBIAN_REVISION)_amd64.changes	\
+		../*_$(VERSION)-$(DEBIAN_REVISION)~truenas+1_*.deb	\
+		../*_$(VERSION)-$(DEBIAN_REVISION)~truenas+1_*.ddeb	\
+		../scst_$(VERSION)-$(DEBIAN_REVISION)~truenas+1.debian.tar.[gx]z	\
+		../scst_$(VERSION)-$(DEBIAN_REVISION)~truenas+1.dsc	\
+		../scst_$(VERSION)-$(DEBIAN_REVISION)~truenas+1_amd64.build	\
+		../scst_$(VERSION)-$(DEBIAN_REVISION)~truenas+1_amd64.buildinfo	\
+		../scst_$(VERSION)-$(DEBIAN_REVISION)~truenas+1_amd64.changes	\
 	) &&								\
 	rm -f "$${output_files[@]}" &&					\
 	buildopts=(-uc -us) &&						\
