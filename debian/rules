@@ -2,8 +2,8 @@
 # See debhelper(7) (uncomment to enable)
 # output every command that modifies files on the build system.
 export DH_VERBOSE = 1
-export KDIR = /lib/modules/5.4.0-2-amd64
-export KVER = 5.4.0-2-amd64
+export KDIR = /lib/modules/5.4.0-4-amd64
+export KVER = 5.4.0-4-amd64
 
 
 # see FEATURE AREAS in dpkg-buildflags(1)
