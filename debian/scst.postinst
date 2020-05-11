@@ -23,7 +23,8 @@ case "$1" in
 	mkdir -p /var/lib/scst/dif_tags
 	mkdir -p /var/lib/scst/pr
 	mkdir -p /var/lib/scst/vdev_mode_pages
-	depmod;;
+	ver=$(ls -d /lib/modules/* | cut -d '/' -f 4)
+	depmod $ver;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
 	;;
