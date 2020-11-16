@@ -1,0 +1,3 @@
+changelog-file-not-compressed *
+unstripped-binary-or-object *
+missing-dependency-on-libc
