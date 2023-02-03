@@ -429,10 +429,16 @@ dpkg: ../scst_$(VERSION).orig.tar.gz
 	echo "KVER=$(KVER)" &&						\
 	sed 's/%{scst_version}/$(VERSION)/'				\
 	  <debian/scst.dkms.in >debian/scst.dkms &&			\
-	sed 's/%{KVER}/$(KVER)/'					\
-	  <debian/scst.preinst.in >debian/scst.preinst &&		\
-	sed 's/%{KVER}/$(KVER)/'					\
-	  <debian/scst.postinst.in >debian/scst.postinst &&		\
+	if echo "$(KVER)" | grep -q "debug+truenas"; then			\
+		mv debian/scst.install debian/scst-dbg.install &&		\
+		sed 's/%{KVER}/$(KVER)/'					\
+		  <debian/scst.postinst.in >debian/scst-dbg.postinst;		\
+	else									\
+		sed 's/%{KVER}/$(KVER)/'					\
+		  <debian/scst.preinst.in >debian/scst.preinst &&		\
+		sed 's/%{KVER}/$(KVER)/'					\
+		  <debian/scst.postinst.in >debian/scst.postinst;		\
+	fi &&								\
 	output_files=(							\
 		../*_$(VERSION)-$(DEBIAN_REVISION)_*.deb		\
 		../*_$(VERSION)-$(DEBIAN_REVISION)_*.ddeb		\
