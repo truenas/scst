@@ -4223,7 +4223,7 @@ int scst_alloc_device(gfp_t gfp_mask, int nodeid, struct scst_device **out_dev)
 	memset(dev, 0, sizeof(*dev));
 
 	dev->handler = &scst_null_devtype;
-	res = percpu_ref_init(&dev->refcnt, scst_release_device, 0, GFP_KERNEL);
+	res = percpu_ref_init(&dev->refcnt, scst_release_device, 0, gfp_mask);
 	if (res < 0)
 		goto free_dev;
 #ifdef CONFIG_SCST_PER_DEVICE_CMD_COUNT_LIMIT
@@ -4505,15 +4505,18 @@ out_on_del:
 		scst_cm_on_del_lun(acg_dev, false);
 
 out_free:
-	/*
-	 * synchronize_rcu() does not have to be called here because the
-	 * tgt_devs that will be freed have never been on any of the
-	 * sess->sess_tgt_dev_list[] lists.
-	 */
 	list_for_each_entry_safe(tgt_dev, tt, &tmp_tgt_dev_list,
 			 extra_tgt_dev_list_entry) {
+		sess = tgt_dev->sess;
+
+		mutex_lock(&sess->tgt_dev_list_mutex);
+		scst_del_tgt_dev(tgt_dev);
+		mutex_unlock(&sess->tgt_dev_list_mutex);
+
+		synchronize_rcu();
 		scst_free_tgt_dev(tgt_dev);
 	}
+
 	scst_del_free_acg_dev(acg_dev, false);
 	goto out;
 }

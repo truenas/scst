@@ -2227,8 +2227,7 @@ static void scst_replace_port_info(struct scst_cmd *cmd)
 	uint8_t *buf, *end, *p, designator_length;
 	int32_t length, page_length;
 
-	if (cmd->cdb[0] != INQUIRY || (cmd->cdb[1] & 0x01/*EVPD*/) == 0 ||
-	    cmd->cdb[2] != 0x83/*device identification*/)
+	if (!scst_cmd_inquired_dev_ident(cmd))
 		return;
 
 	length = scst_get_buf_full_sense(cmd, &buf);
@@ -2242,7 +2241,6 @@ static void scst_replace_port_info(struct scst_cmd *cmd)
 		const uint8_t code_set = p[0] & 0xf;
 		const uint8_t association = (p[1] & 0x30) >> 4;
 		const uint8_t designator_type = p[1] & 0xf;
-		uint16_t tg_id;
 
 		designator_length = p[3];
 
@@ -2259,9 +2257,7 @@ static void scst_replace_port_info(struct scst_cmd *cmd)
 			break;
 		case 5:
 			/* target port group */
-			tg_id = scst_lookup_tg_id(cmd->dev, cmd->tgt);
-			if (tg_id)
-				put_unaligned_be16(tg_id, p + 6);
+			put_unaligned_be16(cmd->tg_id, p + 6);
 			break;
 		}
 	}
@@ -2621,6 +2617,9 @@ static enum scst_exec_res scst_do_real_exec(struct scst_cmd *cmd)
 	TRACE_DBG("Sending cmd %p to SCSI mid-level dev %d:%d:%d:%lld", cmd,
 		  scsi_dev->host->host_no, scsi_dev->channel, scsi_dev->id,
 		  (u64)scsi_dev->lun);
+
+	if (unlikely(scst_cmd_inquired_dev_ident(cmd)))
+		cmd->tg_id = scst_lookup_tg_id(dev, cmd->tgt);
 
 	rc = scst_scsi_exec_async(cmd, cmd, scst_pass_through_cmd_done);
 	if (unlikely(rc != 0)) {
@@ -3852,8 +3851,6 @@ static int scst_finish_cmd(struct scst_cmd *cmd)
 	int res;
 	struct scst_session *sess = cmd->sess;
 	struct scst_io_stat_entry *stat;
-	int block_shift, align_len;
-	uint64_t lba;
 
 	TRACE_ENTRY();
 
@@ -3898,20 +3895,15 @@ static int scst_finish_cmd(struct scst_cmd *cmd)
 	stat = &sess->io_stats[cmd->data_direction];
 	stat->cmd_count++;
 	stat->io_byte_count += cmd->bufflen + cmd->out_bufflen;
-	if (likely(cmd->dev != NULL)) {
-		block_shift = cmd->dev->block_shift;
-		/* Let's track only 4K unaligned cmds at the moment */
-		align_len = (block_shift != 0) ? 4095 : 0;
-		lba = cmd->lba;
-	} else {
-		block_shift = 0;
-		align_len = 0;
-		lba = 0;
-	}
 
-	if (unlikely(((lba << block_shift) & align_len) != 0) ||
-	    unlikely(((cmd->bufflen + cmd->out_bufflen) & align_len) != 0))
-		stat->unaligned_cmd_count++;
+	if (likely(cmd->dev && cmd->dev->block_shift > 0)) {
+		/* Let's track only 4K unaligned cmds at the moment */
+		int align_len = 4095;
+
+		if (unlikely(((cmd->lba << cmd->dev->block_shift) & align_len) != 0) ||
+		    unlikely(((cmd->bufflen + cmd->out_bufflen) & align_len) != 0))
+			stat->unaligned_cmd_count++;
+	}
 
 	list_del(&cmd->sess_cmd_list_entry);
 

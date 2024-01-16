@@ -1877,13 +1877,21 @@ static void qla2x00_abort_srb(struct qla_qpair *qp, srb_t *sp, const int res,
 		}
 
 		spin_lock_irqsave(qp->qp_lock_ptr, *flags);
+		switch (sp->type) {
+		case SRB_SCSI_CMD:
 #if HAVE_SCSI_MQ
-		if (ret_cmd && blk_mq_request_started(scsi_cmd_to_rq(cmd)))
-			sp->done(sp, res);
+			if (ret_cmd && blk_mq_request_started(scsi_cmd_to_rq(cmd)))
+				sp->done(sp, res);
 #else
-		if (ret_cmd && list_empty(&cmd->request->queuelist))
-			sp->done(sp, res);
+			if (ret_cmd && list_empty(&cmd->request->queuelist))
+				sp->done(sp, res);
 #endif
+			break;
+		default:
+			if (ret_cmd)
+				sp->done(sp, res);
+			break;
+		}
 	} else {
 		sp->done(sp, res);
 	}
@@ -5021,7 +5029,7 @@ qla2x00_mem_free(struct qla_hw_data *ha)
 	ha->gid_list = NULL;
 	ha->gid_list_dma = 0;
 
-	if (!list_empty(&ha->base_qpair->dsd_list)) {
+	if (ha->base_qpair && !list_empty(&ha->base_qpair->dsd_list)) {
 		struct dsd_dma *dsd_ptr, *tdsd_ptr;
 
 		/* clean up allocated prev pool */

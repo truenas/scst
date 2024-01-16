@@ -231,7 +231,9 @@ void blk_execute_rq_nowait_backport(struct request *rq, bool at_head)
 
 /* <linux/blkdev.h> */
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 4))
 /*
  * See also commit 05bdb9965305 ("block: replace fmode_t with a block-specific
  * type for block open flags") # v6.5.
@@ -1619,13 +1621,21 @@ static inline void scsi_build_sense(struct scsi_cmnd *scmd, int desc,
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) &&		\
-	(!defined(RHEL_RELEASE_CODE) ||				\
-	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(8, 7) ||	\
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) &&			\
+	!(LINUX_VERSION_CODE >> 8 == KERNEL_VERSION(5, 4, 0) >> 8 &&	\
+	  LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 263)) &&		\
+	!(LINUX_VERSION_CODE >> 8 == KERNEL_VERSION(5, 10, 0) >> 8 &&	\
+	  LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 203)) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||					\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(8, 7) ||		\
 	 RHEL_RELEASE_CODE -0 == RHEL_RELEASE_VERSION(9, 0))
 /*
  * See also 51f3a4788928 ("scsi: core: Introduce the scsi_cmd_to_rq()
- * function").
+ * function") # v5.15.
+ * See also df0110425f42 ("scsi: core: Introduce the scsi_cmd_to_rq()
+ * function") # v5.4.263.
+ * See also b19fe82b4b92 ("scsi: core: Introduce the scsi_cmd_to_rq()
+ * function") # v5.10.203.
  */
 static inline struct request *scsi_cmd_to_rq(struct scsi_cmnd *scmd)
 {
@@ -1672,11 +1682,15 @@ static inline unsigned int scsi_prot_interval(struct scsi_cmnd *scmd)
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0) &&		\
-	(!defined(RHEL_RELEASE_CODE) ||				\
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0) &&			\
+	!(LINUX_VERSION_CODE >> 8 == KERNEL_VERSION(5, 15, 0) >> 8 &&	\
+	  LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 136)) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||					\
 	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 1))
 /*
- * See also commit 11b68e36b167 ("scsi: core: Call scsi_done directly"; v5.16)
+ * See also commit 11b68e36b167 ("scsi: core: Call scsi_done directly") # v5.16.
+ * See also commit d2746cdfd5e5 ("scsi: core: Rename scsi_mq_done() into scsi_done() and export
+ * it") # v5.15.136.
  */
 static inline void scsi_done(struct scsi_cmnd *cmd)
 {
@@ -1795,8 +1809,10 @@ enum {
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0) &&		\
-	(!defined(RHEL_RELEASE_CODE) ||				\
-	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 3))
+	(!defined(RHEL_MAJOR) || RHEL_MAJOR -0 < 8 ||		\
+	 RHEL_MAJOR -0 == 8 && RHEL_MINOR -0 < 9 ||		\
+	 RHEL_MAJOR -0 == 9 && RHEL_MINOR -0 < 3) &&		\
+	!defined(UEK_KABI_RENAME)
 /*
  * See also commit 64fd2ba977b1 ("scsi: scsi_transport_fc: Add an additional
  * flag to fc_host_fpin_rcv()") # v6.3
