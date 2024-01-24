@@ -3031,6 +3031,9 @@ sub addVirtualTarget {
 	my $errorString;
 	my $targets;
 
+	# Disable this code.  Never used but gets expensive as the
+	# target count climbs.
+	if (0) {
 	# Enable all hardware targets before creating virtual ones
 	($targets, $errorString) = $SCST->targets($driver);
 	foreach my $_target (@{$targets}) {
@@ -3041,6 +3044,7 @@ sub addVirtualTarget {
 		    !$$attributes{'enabled'}->{'value'}) {
 			enableTarget($driver, $_target);
 		}
+	}
 	}
 
 	print "\t-> Creating target '$target' for driver '$driver': ";
