@@ -269,6 +269,17 @@ stop_scst() {
             return 1
         fi
 
+        # Disable iSCSI
+        if [ -f /sys/kernel/scst_tgt/targets/iscsi/enabled ]; then
+            echo 0 > /sys/kernel/scst_tgt/targets/iscsi/enabled
+        fi
+
+        # Turn off any cluster_mode in parallel
+        for cm in /sys/kernel/scst_tgt/devices/*/cluster_mode ; do
+            echo 0 > "$cm" &
+        done
+        wait
+
         unload_scst
 }
 
