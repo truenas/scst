@@ -7,10 +7,11 @@ on:
 
 jobs:
   coverity:
+    if: github.repository == 'SCST-project/scst'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Project
-        uses: actions/checkout@v3
+        uses: actions/checkout@main
 
       - name: Get version
         id: get_version

@@ -282,6 +282,53 @@ static inline void blkdev_put_backport(struct block_device *bdev, void *holder)
 
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0) &&			\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(6, 6, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 23))
+/*
+ * See also commit e719b4d15674 ("block: Provide bdev_open_* functions") # v6.7, v6.6.23.
+ */
+struct bdev_handle {
+	struct block_device *bdev;
+	void *holder;
+	blk_mode_t mode;
+};
+
+static inline struct bdev_handle *
+bdev_open_by_path_backport(const char *path, blk_mode_t mode, void *holder,
+			   const struct blk_holder_ops *hops)
+{
+	struct bdev_handle *handle = kmalloc(sizeof(*handle), GFP_KERNEL);
+	struct block_device *bdev;
+
+	if (!handle)
+		return ERR_PTR(-ENOMEM);
+
+	bdev = blkdev_get_by_path(path, mode, holder, hops);
+	if (IS_ERR(bdev)) {
+		kfree(handle);
+		return ERR_CAST(bdev);
+	}
+
+	handle->bdev = bdev;
+	handle->holder = holder;
+	handle->mode = mode;
+
+	return handle;
+}
+
+#define bdev_open_by_path bdev_open_by_path_backport
+
+static inline void bdev_release_backport(struct bdev_handle *handle)
+{
+	blkdev_put(handle->bdev, handle->holder);
+	kfree(handle);
+}
+
+#define bdev_release bdev_release_backport
+
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0) &&		\
 	(!defined(RHEL_RELEASE_CODE) ||				\
 	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 1))
@@ -888,13 +935,15 @@ static inline void kvfree(void *addr)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0) &&			\
 	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(5, 15, 0) >> 8 ||	\
 	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 54)) &&		\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(5, 10, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 210)) &&		\
 	(!defined(RHEL_RELEASE_CODE) ||					\
 	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 0)) &&		\
 	(!defined(UEK_KABI_RENAME) ||					\
 	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 /*
  * See also commit a8749a35c3990 ("mm: vmalloc: introduce array allocation functions") # v5.18,
- * v5.15.54.
+ * v5.15.54, v5.10.210.
  */
 static inline void *vmalloc_array(size_t n, size_t size)
 {
@@ -1305,6 +1354,27 @@ static const struct file_operations __name ## _fops = {			\
 }
 #endif
 
+/*
+ * See also commit 9cba82bba500 ("seq_file: add helper macro to define
+ * attribute for rw file") # v6.7.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0)
+#define DEFINE_SHOW_STORE_ATTRIBUTE(__name)				\
+static int __name ## _open(struct inode *inode, struct file *file)	\
+{									\
+	return single_open(file, __name ## _show, inode->i_private);	\
+}									\
+									\
+static const struct file_operations __name ## _fops = {			\
+	.owner		= THIS_MODULE,					\
+	.open		= __name ## _open,				\
+	.read		= seq_read,					\
+	.write		= __name ## _write,				\
+	.llseek		= seq_lseek,					\
+	.release	= single_release,				\
+}
+#endif
+
 /* <linux/slab.h> */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0) &&	\
@@ -1628,7 +1698,10 @@ static inline void scsi_build_sense(struct scsi_cmnd *scmd, int desc,
 	  LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 203)) &&		\
 	(!defined(RHEL_RELEASE_CODE) ||					\
 	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(8, 7) ||		\
-	 RHEL_RELEASE_CODE -0 == RHEL_RELEASE_VERSION(9, 0))
+	 RHEL_RELEASE_CODE -0 == RHEL_RELEASE_VERSION(9, 0)) &&		\
+	(!defined(UEK_KABI_RENAME) ||					\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 17) ||		\
+	 !defined(SB_I_SKIP_SYNC))
 /*
  * See also 51f3a4788928 ("scsi: core: Introduce the scsi_cmd_to_rq()
  * function") # v5.15.
@@ -1686,7 +1759,9 @@ static inline unsigned int scsi_prot_interval(struct scsi_cmnd *scmd)
 	!(LINUX_VERSION_CODE >> 8 == KERNEL_VERSION(5, 15, 0) >> 8 &&	\
 	  LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 136)) &&		\
 	(!defined(RHEL_RELEASE_CODE) ||					\
-	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 1))
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 1)) &&		\
+	(!defined(UEK_KABI_RENAME) ||					\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 /*
  * See also commit 11b68e36b167 ("scsi: core: Call scsi_done directly") # v5.16.
  * See also commit d2746cdfd5e5 ("scsi: core: Rename scsi_mq_done() into scsi_done() and export

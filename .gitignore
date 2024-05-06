@@ -12,8 +12,10 @@
 *.orig
 *.sdtinfo.c
 *.sdtstub.S
+*.out
 *~
 .cache.mk
+.cache/
 .ctf
 .depend_adm
 .depend_d

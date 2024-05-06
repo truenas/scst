@@ -10,6 +10,7 @@ on:
 jobs:
   send_mails:
     name: ${{matrix.commit.message}}
+    if: github.repository == 'SCST-project/scst'
     runs-on: ubuntu-latest
     strategy:
       max-parallel: 1
@@ -17,7 +18,7 @@ jobs:
         commit: ${{github.event.commits}}
     steps:
       - name: Checkout Project
-        uses: actions/checkout@v3
+        uses: actions/checkout@main
         with:
           ref: ${{matrix.commit.id}}
           fetch-depth: 2
