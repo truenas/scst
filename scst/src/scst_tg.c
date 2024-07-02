@@ -1469,16 +1469,19 @@ uint16_t scst_lookup_tg_id(struct scst_device *dev, struct scst_tgt *tgt)
 	uint16_t tg_id = 0;
 
 	TRACE_ENTRY();
+	printk("scst_lookup_tg_id dev=%s tgt=%s (%d)\n", dev->virt_name, tgt->tgt_name, tgt->rel_tgt_id);
 	mutex_lock(&scst_dg_mutex);
 	dg = __lookup_dg_by_dev(dev);
 	if (!dg)
 		goto out_unlock;
+	printk("scst_lookup_tg_id Found dg\n");
 	tg_tgt = __lookup_dg_tgt(dg, tgt->tgt_name);
 	if (!tg_tgt)
 		goto out_unlock;
 	tg = tg_tgt->tg;
 	BUG_ON(!tg);
 	tg_id = tg->group_id;
+	printk("scst_lookup_tg_id Found tg_tgt (%d)\n", tg_id);
 out_unlock:
 	mutex_unlock(&scst_dg_mutex);
 
