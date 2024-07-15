@@ -6432,6 +6432,97 @@ static void vdisk_task_mgmt_fn_done(struct scst_mgmt_cmd *mcmd,
 	return;
 }
 
+static void vdisk_bio_ext_copy_remap(struct scst_cmd *cmd,
+	struct scst_ext_copy_seg_descr *seg)
+{
+	struct block_device *bdev_in, *bdev_out;
+	loff_t pos_in, pos_out, pos_shift = 0;
+	size_t len, chunk, rem, ret, d_count = 0;
+	uint64_t size_in, size_out, blocksize;
+	struct scst_ext_copy_data_descr *d;
+	struct scst_vdisk_dev *src_virt_dev;
+	struct scst_vdisk_dev *dst_virt_dev;
+	uint64_t in_shift;
+	uint64_t out_shift;
+
+	if (!seg || !seg->src_tgt_dev || !seg->dst_tgt_dev)
+		return;
+
+	src_virt_dev = seg->src_tgt_dev->dev->dh_priv;
+	dst_virt_dev = seg->dst_tgt_dev->dev->dh_priv;
+
+	if (!src_virt_dev->blockio || !dst_virt_dev->blockio)
+		goto out;
+
+	bdev_in = src_virt_dev->bdev_desc.bdev;
+	bdev_out = dst_virt_dev->bdev_desc.bdev;
+	pos_in = seg->data_descr.src_lba << seg->src_tgt_dev->dev->block_shift;
+	pos_out = seg->data_descr.dst_lba << seg->dst_tgt_dev->dev->block_shift;
+	len = seg->data_descr.data_len;
+	size_in = bdev_nr_bytes(bdev_in);
+	size_out = bdev_nr_bytes(bdev_out);
+	blocksize = bdev_get_queue(bdev_in)->limits.physical_block_size;
+
+	if (blocksize != bdev_get_queue(bdev_out)->limits.physical_block_size ||
+	    len < blocksize || (pos_in + len > size_in) || (pos_out + len > size_out))
+		goto out;
+
+	/*
+	 * Check offsets alignment with block size, adjust if possible
+	 */
+	in_shift = pos_in % blocksize;
+	out_shift = pos_out % blocksize;
+	if (in_shift != out_shift)
+		goto out;
+	pos_shift = blocksize - in_shift;
+	len -= pos_shift;
+	rem = len % blocksize;
+	chunk = len - rem;
+
+	/*
+	 * No data to be copied for zvol, fallback
+	 */
+	if (chunk <= 0)
+		goto out;
+
+	if ((len >= blocksize) && bdev_max_copy_sectors(bdev_in)) {
+		ret = blkdev_copy_offload(bdev_in, pos_in + pos_shift, pos_out + pos_shift, chunk,
+			    NULL, NULL, GFP_KERNEL, bdev_out);
+		if (ret == chunk) {
+			if (rem != 0 || pos_shift != 0) {
+				d = kzalloc(sizeof(*d)*((rem != 0 && pos_shift != 0) ? 2 : 1),
+				    GFP_KERNEL);
+				if (d == NULL)
+					goto out;
+				if (pos_shift) {
+					d[d_count].data_len = pos_shift;
+					d[d_count].dst_lba = seg->data_descr.dst_lba;
+					d[d_count].src_lba = seg->data_descr.src_lba;
+					d_count++;
+				}
+				if (rem) {
+					d[d_count].data_len = rem;
+					d[d_count].dst_lba = (pos_out + pos_shift + chunk) >>
+					    seg->dst_tgt_dev->dev->block_shift;
+					d[d_count].src_lba = (pos_in + pos_shift + chunk) >>
+					    seg->src_tgt_dev->dev->block_shift;
+					d_count++;
+				}
+				scst_ext_copy_remap_done(cmd, d, d_count);
+			} else {
+				scst_ext_copy_remap_done(cmd, NULL, 0);
+			}
+			return;
+		}
+	}
+
+out:
+	/*
+	 * Fallback to default SCST write path
+	 */
+	scst_ext_copy_remap_done(cmd, &seg->data_descr, 1);
+}
+
 #ifdef CONFIG_DEBUG_EXT_COPY_REMAP
 static void vdev_ext_copy_remap(struct scst_cmd *cmd,
 	struct scst_ext_copy_seg_descr *seg)
@@ -9748,6 +9839,7 @@ static struct scst_dev_type vdisk_blk_devtype = {
 	.del_device =		vdisk_del_device,
 	.dev_attrs =		vdisk_blockio_attrs,
 	.add_device_parameters = blockio_add_dev_params,
+	.ext_copy_remap =	vdisk_bio_ext_copy_remap,
 #if defined(CONFIG_SCST_DEBUG) || defined(CONFIG_SCST_TRACING)
 	.default_trace_flags =	SCST_DEFAULT_DEV_LOG_FLAGS,
 	.trace_flags =		&trace_flag,
