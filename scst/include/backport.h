@@ -329,6 +329,18 @@ static inline void bdev_release_backport(struct bdev_handle *handle)
 
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
+/*
+ * See also commit 6436bd90f76e ("block: add a bdev_nr_bytes helper") # v5.16.
+ */
+static inline loff_t bdev_nr_bytes_backport(struct block_device *bdev)
+{
+	return i_size_read(bdev->bd_inode);
+}
+
+#define bdev_nr_bytes bdev_nr_bytes_backport
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0) &&		\
 	(!defined(RHEL_RELEASE_CODE) ||				\
 	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 1))
@@ -553,10 +565,12 @@ typedef unsigned int __poll_t;
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0) && \
-	LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 0)
+	(LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 0) || \
+	 LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0))
 /*
  * See also commit bb7462b6fd64 ("vfs: use helpers for calling
- * f_op->{read,write}_iter()").
+ * f_op->{read,write}_iter()") # v4.11.
+ * See also commit 7c98f7cb8fda ("remove call_{read,write}_iter() functions") # v6.10.
  */
 static inline ssize_t call_read_iter(struct file *file, struct kiocb *kio,
 				     struct iov_iter *iter)
@@ -1494,6 +1508,25 @@ static inline ssize_t strscpy(char *dest, const char *src, size_t count)
 
 	return ret >= count ? -E2BIG : ret;
 }
+#endif
+
+#ifndef memtostr
+/*
+ * See also commit 0efc5990bca5 ("string.h: Introduce memtostr() and memtostr_pad()") # v6.10.
+ */
+#define memtostr(dest, src)	do {					\
+	const size_t _dest_len = __builtin_object_size(dest, 1);	\
+	const size_t _src_len = __builtin_object_size(src, 1);		\
+	const size_t _src_chars = strnlen(src, _src_len);		\
+	const size_t _copy_len = min(_dest_len - 1, _src_chars);	\
+									\
+	BUILD_BUG_ON(!__builtin_constant_p(_dest_len) ||		\
+		     !__builtin_constant_p(_src_len) ||			\
+		     _dest_len == 0 || _dest_len == (size_t)-1 ||	\
+		     _src_len == 0 || _src_len == (size_t)-1);		\
+	memcpy(dest, src, _copy_len);					\
+	dest[_copy_len] = '\0';						\
+} while (0)
 #endif
 
 /* <linux/sysfs.h> */
