@@ -2094,7 +2094,7 @@ int scst_set_cmd_error(struct scst_cmd *cmd, int key, int asc, int ascq)
 		if (cmd->cdb[0] == REQUEST_SENSE)
 			res = scst_set_lun_not_supported_request_sense(cmd,
 				key, asc, ascq);
-		else if (cmd->cdb[0] == INQUIRY)
+		else if (cmd->cdb[0] == INQUIRY && !(cmd->cdb[1] & 0x01/*EVPD*/))
 			res = scst_set_lun_not_supported_inquiry(cmd);
 		else if (cmd->cdb[0] == REPORT_LUNS)
 			res = scst_set_lun_not_supported_report_luns(cmd);
@@ -6178,7 +6178,7 @@ loff_t scst_bdev_size(const char *path)
 	if (rc)
 		return rc;
 
-	res = i_size_read(bdev_desc.bdev->bd_inode);
+	res = bdev_nr_bytes(bdev_desc.bdev);
 
 	scst_release_bdev(&bdev_desc);
 	return res;
@@ -8431,6 +8431,16 @@ static struct request *blk_make_request(struct request_queue *q,
 }
 #endif
 
+static inline unsigned int
+queue_dma_pad_mask(const struct request_queue *q)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
+	return q->dma_pad_mask;
+#else
+	return q->limits.dma_pad_mask;
+#endif
+}
+
 /* __blk_map_kern_sg - map kernel data to a request for REQ_TYPE_BLOCK_PC */
 static struct request *__blk_map_kern_sg(struct request_queue *q,
 	struct scatterlist *sgl, int nents, struct blk_kern_sg_work *bw,
@@ -8553,7 +8563,7 @@ static struct request *__blk_map_kern_sg(struct request_queue *q,
 	}
 
 	/* Total length must satisfy DMA padding alignment */
-	if ((tot_len & q->dma_pad_mask) && bw != NULL) {
+	if (bw && (tot_len & queue_dma_pad_mask(q))) {
 		rq = ERR_PTR(-EINVAL);
 		goto out_free_bios;
 	}

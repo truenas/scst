@@ -1033,6 +1033,7 @@ out:
 
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
 static int scst_local_slave_alloc(struct scsi_device *sdev)
 {
 	struct request_queue *q = sdev->request_queue;
@@ -1053,10 +1054,11 @@ static int scst_local_slave_alloc(struct scsi_device *sdev)
 	 * and supports block sizes from 512 up to 4096. See also
 	 * https://github.com/sahlberg/libiscsi/issues/302.
 	 */
-	blk_queue_dma_alignment(q, 4095);
+	blk_queue_dma_alignment(q, (4096 - 1));
 
 	return 0;
 }
+#endif
 
 static int scst_local_slave_configure(struct scsi_device *sdev)
 {
@@ -1379,7 +1381,11 @@ static const struct scsi_host_template scst_lcl_ini_driver_template = {
 	.name				= SCST_LOCAL_NAME,
 	.queuecommand			= scst_local_queuecommand,
 	.change_queue_depth		= scst_local_change_queue_depth,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
 	.slave_alloc			= scst_local_slave_alloc,
+#else
+	.dma_alignment			= (4096 - 1),
+#endif
 	.slave_configure		= scst_local_slave_configure,
 	.eh_abort_handler		= scst_local_abort,
 	.eh_device_reset_handler	= scst_local_device_reset,
@@ -1494,8 +1500,11 @@ static DRIVER_REMOVE_RET scst_local_driver_remove(struct device *dev)
 	return (DRIVER_REMOVE_RET)0;
 }
 
-static int scst_local_bus_match(struct device *dev,
-	struct device_driver *dev_driver)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
+static int scst_local_bus_match(struct device *dev, struct device_driver *drv)
+#else
+static int scst_local_bus_match(struct device *dev, const struct device_driver *drv)
+#endif
 {
 	TRACE_ENTRY();
 
