@@ -19,7 +19,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/hash.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <scsi/libfc.h>
 #include <scsi/fc/fc_els.h>
 #include "fcst.h"

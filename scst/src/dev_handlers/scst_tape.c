@@ -25,7 +25,7 @@
 #include <linux/init.h>
 #include <scsi/scsi_host.h>
 #include <linux/slab.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #define LOG_PREFIX           "dev_tape"
 

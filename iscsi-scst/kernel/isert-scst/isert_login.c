@@ -889,7 +889,6 @@ static dev_t devno;
 
 static const struct file_operations listener_fops = {
 	.owner		= THIS_MODULE,
-	.llseek		= no_llseek,
 	.read		= isert_listen_read,
 	.unlocked_ioctl	= isert_listen_ioctl,
 	.compat_ioctl	= isert_listen_ioctl,
@@ -900,7 +899,6 @@ static const struct file_operations listener_fops = {
 
 static const struct file_operations conn_fops = {
 	.owner		= THIS_MODULE,
-	.llseek		= no_llseek,
 	.read		= isert_read,
 	.write		= isert_write,
 	.unlocked_ioctl	= isert_ioctl,

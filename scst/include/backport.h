@@ -49,7 +49,7 @@
 #include <scsi/scsi_eh.h>	/* scsi_build_sense_buffer() */
 struct scsi_target;
 #include <scsi/scsi_transport_fc.h> /* struct bsg_job */
-#include <asm/unaligned.h>	/* get_unaligned_be64() */
+#include <linux/unaligned.h>	/* get_unaligned_be64() */
 
 /* <asm-generic/barrier.h> */
 
@@ -432,7 +432,6 @@ static const struct file_operations __fops = {				\
 	.release = simple_attr_release,					\
 	.read	 = debugfs_attr_read,					\
 	.write	 = debugfs_attr_write,					\
-	.llseek  = no_llseek,						\
 }
 
 static inline ssize_t debugfs_attr_read(struct file *file, char __user *buf,

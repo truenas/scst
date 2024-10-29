@@ -32,7 +32,7 @@
 #include <linux/ctype.h>
 #include <linux/delay.h>
 #include <linux/vmalloc.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <asm/checksum.h>
 #ifndef INSIDE_KERNEL_TREE
 #include <linux/version.h>

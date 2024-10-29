@@ -50,7 +50,7 @@
 #include <linux/delay.h>
 #include <linux/namei.h>
 #include <asm/div64.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <linux/slab.h>
 #include <linux/bio.h>
 #include <linux/crc32c.h>

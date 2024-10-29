@@ -42,7 +42,7 @@
 #include <linux/wait.h>
 #include <linux/cpumask.h>
 #include <linux/dlm.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #if 0 /* Let's disable it for now to see if users will complain about it */
 #define CONFIG_SCST_PER_DEVICE_CMD_COUNT_LIMIT

@@ -18,7 +18,7 @@
 #include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include <linux/kmod.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #ifdef INSIDE_KERNEL_TREE
 #include <scst/scst.h>
 #include <scst/scst_event.h>

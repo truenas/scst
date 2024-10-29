@@ -20,7 +20,7 @@
 #define __QLA_TARGET_H
 
 #include <linux/version.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include "qla_def.h"
 #include "qla_dsd.h"
 
