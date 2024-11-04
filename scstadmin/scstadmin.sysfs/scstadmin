@@ -3033,7 +3033,7 @@ sub addVirtualTarget {
 
 	# Disable this code.  Never used but gets expensive as the
 	# target count climbs.
-	if (0) {
+	if ($driver ne "iscsi") {
 	# Enable all hardware targets before creating virtual ones
 	($targets, $errorString) = $SCST->targets($driver);
 	foreach my $_target (@{$targets}) {
