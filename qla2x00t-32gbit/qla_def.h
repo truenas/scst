@@ -28,6 +28,11 @@
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 #include <linux/aer.h>
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
+#include <asm/unaligned.h>
+#else
+#include <linux/unaligned.h>
+#endif
 #include <linux/mutex.h>
 #include <linux/btree.h>
 #include <linux/version.h>
@@ -2676,7 +2681,6 @@ typedef struct fc_port {
 	struct kref sess_kref;
 	struct qla_tgt *tgt;
 	unsigned long expires;
-	struct list_head del_list_entry;
 	struct work_struct free_work;
 	struct work_struct reg_work;
 	uint64_t jiffies_at_registration;

@@ -1,13 +1,22 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+set -e
+
+scriptpath=${CHECKPATCH_PATH:-/lib/modules/$(uname -r)/build/scripts}
 
 ignore=(
-    CONSTANT_COMPARISON
-    LINUX_VERSION_CODE
-    LONG_LINE
-    LONG_LINE_COMMENT
-    LONG_LINE_STRING
-    RETURN_VOID
-    SPDX_LICENSE_TAG
-    SYMBOLIC_PERMS
+	MISSING_SIGN_OFF
+	EMAIL_SUBJECT
+	UNKNOWN_COMMIT_ID
+	NO_AUTHOR_SIGN_OFF
+	COMMIT_LOG_USE_LINK
+	BAD_REPORTED_BY_LINK
+	FILE_PATH_CHANGES
+	SPDX_LICENSE_TAG
+	LINUX_VERSION_CODE
+	CONSTANT_COMPARISON
+	NEW_TYPEDEFS
 )
-../linux-kernel/scripts/checkpatch.pl -f --show-types --ignore="$(echo "${ignore[@]}" | sed 's/ /,/g')" $(list-source-files | grep -vE '^debian/|^fcst/linux-patches|patch$|pdf$|png$|^iscsi-scst/usr|^qla|^scripts/|^scstadmin/|^usr/|^www/') | sed 's/^#[0-9]*: FILE: \(.*\):/\1:1:/'
+ignore_str=${ignore[*]}
+
+${scriptpath}/checkpatch.pl --no-tree --show-types --strict --ignore="${ignore_str// /,}" $@
