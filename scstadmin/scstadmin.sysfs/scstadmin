@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-my $Version  = 'SCST Configurator v3.9.0-pre';
+my $Version  = 'SCST Configurator v3.10.0-pre';
 
 # Configures SCST
 #
@@ -3683,7 +3683,7 @@ sub listAttributes {
 
 				next;
 			}
-			$l_value = length($value) if ($l_value < length($value));
+			$l_value = length($value) if (defined($value) && $l_value < length($value));
 		}
 	}
 
