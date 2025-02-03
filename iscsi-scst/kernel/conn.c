@@ -26,6 +26,9 @@
 #include "iscsi.h"
 #include "digest.h"
 
+#undef DEFAULT_SYMBOL_NAMESPACE
+#define DEFAULT_SYMBOL_NAMESPACE	SCST_NAMESPACE
+
 #if defined(CONFIG_LOCKDEP) && !defined(CONFIG_SCST_PROC)
 static struct lock_class_key scst_conn_key;
 static struct lockdep_map scst_conn_dep_map =
@@ -163,6 +166,25 @@ static ssize_t iscsi_conn_target_ip_show(struct kobject *kobj, struct kobj_attri
 static struct kobj_attribute iscsi_conn_target_ip_attr =
 	__ATTR(target_ip, 0444, iscsi_conn_target_ip_show, NULL);
 
+static ssize_t iscsi_conn_transport_show(struct kobject *kobj, struct kobj_attribute *attr,
+					 char *buf)
+{
+	int pos;
+	struct iscsi_conn *conn;
+
+	TRACE_ENTRY();
+
+	conn = container_of(kobj, struct iscsi_conn, conn_kobj);
+
+	pos = snprintf(buf, SCST_SYSFS_BLOCK_SIZE, "%s\n", conn->transport->name);
+
+	TRACE_EXIT_RES(pos);
+	return pos;
+}
+
+static struct kobj_attribute iscsi_conn_transport_attr =
+	__ATTR(transport, 0444, iscsi_conn_transport_show, NULL);
+
 static ssize_t iscsi_conn_cid_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	int pos;
@@ -281,6 +303,13 @@ restart:
 	if (res != 0) {
 		PRINT_ERROR("Unable create sysfs attribute %s for conn %s",
 			    iscsi_conn_target_ip_attr.attr.name, addr);
+		goto out_err;
+	}
+
+	res = sysfs_create_file(&conn->conn_kobj, &iscsi_conn_transport_attr.attr);
+	if (res != 0) {
+		PRINT_ERROR("Unable create sysfs attribute %s for conn %s",
+			    iscsi_conn_transport_attr.attr.name, addr);
 		goto out_err;
 	}
 
