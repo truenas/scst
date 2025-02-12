@@ -213,7 +213,7 @@ unload_scst() {
 }
 
 start_scst() {
-        if [ -e /sys/module/scst ] && [ -e /sys/module/scst/refcnt ]; then
+        if pgrep -x "iscsi-scstd" > /dev/null; then
             echo Already started
             return 0
         fi
