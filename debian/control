@@ -3,10 +3,14 @@ Section: net
 Priority: optional
 Maintainer: Vladislav Bolkhovitin <vst@vlnb.net>
 Build-Depends: debhelper (>= 9),
- linux-headers-truenas-production-amd64,
- linux-headers-truenas-debug-amd64,
- linux-image-truenas-production-amd64,
- linux-image-truenas-debug-amd64,
+ linux-headers-truenas-production-amd64 [amd64],
+ linux-headers-truenas-production-arm64 [arm64],
+ linux-headers-truenas-debug-amd64 [amd64],
+ linux-headers-truenas-debug-arm64 [arm64],
+ linux-image-truenas-production-amd64 [amd64],
+ linux-image-truenas-production-arm64 [arm64],
+ linux-image-truenas-debug-amd64 [amd64],
+ linux-image-truenas-debug-arm64 [arm64],
  quilt,
  dpkg-dev (>= 1.13.19)
 Standards-Version: 4.1.1
@@ -14,10 +18,14 @@ Homepage: http://scst.sourceforge.net
 
 Package: scst
 Architecture: any
-Depends: linux-headers-truenas-production-amd64,
-  linux-headers-truenas-debug-amd64,
-  linux-image-truenas-production-amd64,
-  linux-image-truenas-debug-amd64,
+Depends: linux-headers-truenas-production-amd64 [amd64],
+  linux-headers-truenas-production-arm64 [arm64],
+  linux-headers-truenas-debug-amd64 [amd64],
+  linux-headers-truenas-debug-arm64 [arm64],
+  linux-image-truenas-production-amd64 [amd64],
+  linux-image-truenas-production-arm64 [arm64],
+  linux-image-truenas-debug-amd64 [amd64],
+  linux-image-truenas-debug-arm64 [arm64],
   ${misc:Depends}
 Conflicts: scst-dkms
 Description: Generic SCSI target framework
