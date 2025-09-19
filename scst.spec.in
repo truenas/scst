@@ -90,7 +90,7 @@ BuildRequires:	%{?kernel_rpm:%{kernel_rpm} = %{krpmver} %{kernel_devel_rpm} = %{
 Source:		%{kmod_name}-%{version}.tar.bz2
 BuildRoot:	%{_tmppath}/%{name}-%{version}-build
 AutoReqProv:	no
-Requires:	%{?kernel_rpm:%{kernel_rpm} = %{krpmver}} @depmod@ %{expand:%%(for c in find rm; do echo -n "$(PATH=/usr/sbin:/usr/bin:/sbin:/bin which $c) "; done)}
+Requires:	%{?kernel_rpm:%{kernel_rpm} = %{krpmver}} @depmod@ coreutils findutils
 Provides:	scst
 
 %description
@@ -142,7 +142,7 @@ done
 %install
 %{?kdir:export KDIR=%{kdir}}
 %{!?kdir:%{?kversion:export KVER=%{kversion}}}
-export PREFIX=%{_prefix} MANDIR=%{_mandir} DEPMOD=true
+export PREFIX=%{_prefix} MANDIR=%{_mandir} SBINDIR=%{_sbindir} DEPMOD=true
 export BUILD_2X_MODULE=y CONFIG_SCSI_QLA_FC=y CONFIG_SCSI_QLA2XXX_TARGET=y
 for d in scst; do
     DESTDIR=%{buildroot} %{make} -C $d install

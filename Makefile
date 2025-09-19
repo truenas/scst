@@ -16,7 +16,7 @@
 #
 #
 
-SHELL = /bin/bash
+SHELL := /bin/bash
 
 # Define the location to the kernel src. Can be defined here or on
 # the command line during the build process. If KDIR is defined,
@@ -30,58 +30,70 @@ SHELL = /bin/bash
 #export KVER=2.6.x
 
 ifdef KDIR
-     ifndef KVER
-          export KVER = $(strip $(shell					 \
-		cat $(KDIR)/include/config/kernel.release 2>/dev/null || \
-		make -s -C $(KDIR) kernelversion))
-     endif
+    ifndef KVER
+        KVER = $(strip $(shell						\
+            cat $(KDIR)/include/config/kernel.release 2>/dev/null ||	\
+            make -s -C $(KDIR) kernelversion))
+    endif
 else
-     ifndef KVER
-	KVER=$(strip $(shell uname -r))
-     endif
-     KDIR=/lib/modules/$(KVER)/build
+    ifndef KVER
+        KVER=$(strip $(shell uname -r))
+    endif
+
+    KDIR=/lib/modules/$(KVER)/build
 endif
 
 PKG_BUILD_MODE ?= 2release
 
-OLD_QLA_INI_DIR=qla2x00t
-OLD_QLA_DIR=$(OLD_QLA_INI_DIR)/qla2x00-target
+OLD_QLA_INI_DIR = qla2x00t
+OLD_QLA_DIR = $(OLD_QLA_INI_DIR)/qla2x00-target
 
-NEW_QLA_INI_DIR=qla2x00t-32gbit
-NEW_QLA_DIR=$(NEW_QLA_INI_DIR)/qla2x00-target
+NEW_QLA_INI_DIR = qla2x00t-32gbit
+NEW_QLA_DIR = $(NEW_QLA_INI_DIR)/qla2x00-target
 
 ifeq ($(QLA_32GBIT),no)
-    QLA_INI_DIR=$(OLD_QLA_INI_DIR)
-    QLA_DIR=$(OLD_QLA_DIR)
+    QLA_INI_DIR = $(OLD_QLA_INI_DIR)
+    QLA_DIR = $(OLD_QLA_DIR)
 else
-    QLA_INI_DIR=$(NEW_QLA_INI_DIR)
-    QLA_DIR=$(NEW_QLA_DIR)
+    QLA_INI_DIR = $(NEW_QLA_INI_DIR)
+    QLA_DIR = $(NEW_QLA_DIR)
 endif
 
+SCST_DIR = scst
+DOC_DIR = doc
+SCSTADM_DIR = scstadmin
+USR_DIR = usr
+SRP_DIR = srpt
+SCST_LOCAL_DIR = scst_local
+FCST_DIR = fcst
+EMULEX_DIR = emulex
+ISCSI_DIR = iscsi-scst
 
-SCST_DIR=scst
-DOC_DIR=doc
-SCSTADM_DIR=scstadmin
-USR_DIR=usr
-SRP_DIR=srpt
-SCST_LOCAL_DIR=scst_local
-FCST_DIR=fcst
-EMULEX_DIR=emulex
+BUILD_DATE := $(shell date -u '+%Y/%m/%d-%H:%M:%S-%Z%:z')
+GIT_COMMIT := $(shell git rev-parse --short=12 HEAD 2>/dev/null)
 
-ISCSI_DIR=iscsi-scst
-
-SCST_GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null)
-
-REVISION ?= $(SCST_GIT_COMMIT)
-export REVISION
-
-VERSION_WITHOUT_REVISION := $(shell echo -n "$$(sed -n 's/^\#define[[:blank:]]SCST_VERSION_NAME[[:blank:]]*\"\([^-]*\).*\"/\1/p' scst/include/scst_const.h)")
-ifneq (, $(REVISION))
-VERSION := $(VERSION_WITHOUT_REVISION).$(REVISION)
-else
-VERSION := $(VERSION_WITHOUT_REVISION)
+ifndef BUILD_NUMBER
+BUILD_NUMBER := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
 endif
-DEBIAN_REVISION=1.1
+
+ifndef ARCH_TYPE
+ARCH_TYPE := $(shell uname -m)
+endif
+
+export KVER BUILD_DATE GIT_COMMIT BUILD_NUMBER ARCH_TYPE
+
+RELEASE_VERSION := $(shell echo -n "$$(sed -n 's/^\#define[[:blank:]]SCST_VERSION_NAME[[:blank:]]*\"\([^-]*\).*\"/\1/p' scst/include/scst_const.h)")
+
+ifndef REVISION
+	ifneq ($(GIT_COMMIT),)
+		REVISION := $(BUILD_NUMBER).$(GIT_COMMIT)
+	else
+		REVISION := $(BUILD_NUMBER)
+	endif
+endif
+
+VERSION := $(RELEASE_VERSION).$(REVISION)
+DEBIAN_REVISION := 1.1
 RPMTOPDIR ?= $(shell if [ $$(id -u) = 0 ]; then echo /usr/src/packages;\
 		else echo $$PWD/rpmbuilddir; fi)
 SCST_SOURCE_FILES = $(shell if [ -e scripts/list-source-files ]; then	\
@@ -91,81 +103,87 @@ SCST_SOURCE_FILES = $(shell if [ -e scripts/list-source-files ]; then	\
 			fi)
 
 help:
-	@echo "		all               : make all"
-	@echo "		clean             : clean files"
-	@echo "		extraclean        : clean + clean dependencies"
-	@echo "		install           : install"
-	@echo "		uninstall         : uninstall"
+	@echo "		tags                  : make tags"
+	@echo "		cov-build             : make coverity build"
 	@echo ""
-	@echo "		scst              : make scst only"
-	@echo "		scst_clean        : scst: clean "
-	@echo "		scst_extraclean   : scst: clean + clean dependencies"
-	@echo "		scst_install      : scst: install"
-	@echo "		scst_uninstall    : scst: uninstall"
+	@echo "		all                   : make all"
+	@echo "		clean                 : clean files"
+	@echo "		extraclean            : clean + clean dependencies"
+	@echo "		install               : install"
+	@echo "		uninstall             : uninstall"
 	@echo ""
-	@echo "		scstadm_install   : scstadmin: install"
-	@echo "		scstadm_uninstall : scstadmin: uninstall"
+	@echo "		scst                  : make scst only"
+	@echo "		scst_clean            : scst: clean"
+	@echo "		scst_extraclean       : scst: clean + clean dependencies"
+	@echo "		scst_install          : scst: install"
+	@echo "		scst_uninstall        : scst: uninstall"
 	@echo ""
-	@echo "		qla               : make QLA target driver"
-	@echo "		qla_clean         : qla target: clean "
-	@echo "		qla_extraclean    : qla target: clean + clean dependencies"
-	@echo "		qla_install       : qla target: install"
-	@echo "		qla_uninstall     : qla target: uninstall"
+	@echo "		docs                  : make docs"
+	@echo "		docs_clean            : docs: clean"
+	@echo "		docs_extraclean       : docs: clean + clean dependencies"
 	@echo ""
-	@echo "		iscsi             : make iSCSI target"
-	@echo "		iscsi_clean       : ISCSI target: clean "
-	@echo "		iscsi_extraclean  : ISCSI target: clean + clean dependencies"
-	@echo "		iscsi_install     : ISCSI target: install"
-	@echo "		iscsi_uninstall   : ISCSI target: uninstall"
+	@echo "		scstadm               : make scstadmin"
+	@echo "		scstadm_clean         : scstadmin: clean"
+	@echo "		scstadm_extraclean    : scstadmin: clean + clean dependencies"
+	@echo "		scstadm_install       : scstadmin: install"
+	@echo "		scstadm_uninstall     : scstadmin: uninstall"
 	@echo ""
-	@echo "		emulex             : make Emulex target"
-	@echo "		emulex_clean       : Emulex target: clean "
-	@echo "		emulex_extraclean  : Emulex target: clean + clean dependencies"
-	@echo "		emulex_install     : Emulex target: install"
-	@echo "		emulex_uninstall   : Emulex target: uninstall"
+	@echo "		qla                   : make QLA target driver"
+	@echo "		qla_clean             : qla target: clean"
+	@echo "		qla_extraclean        : qla target: clean + clean dependencies"
+	@echo "		qla_install           : qla target: install"
+	@echo "		qla_uninstall         : qla target: uninstall"
 	@echo ""
-	@echo "		srpt              : make SRP target"
-	@echo "		srpt_clean        : srp target: clean "
-	@echo "		srpt_extraclean   : srp target: clean + clean dependencies"
-	@echo "		srpt_install      : srp target: install"
-	@echo "		srpt_uninstall    : srp target: uninstall"
+	@echo "		iscsi                 : make iSCSI target"
+	@echo "		iscsi_clean           : ISCSI target: clean"
+	@echo "		iscsi_extraclean      : ISCSI target: clean + clean dependencies"
+	@echo "		iscsi_install         : ISCSI target: install"
+	@echo "		iscsi_uninstall       : ISCSI target: uninstall"
 	@echo ""
-	@echo "		fcst              : make FCoE target"
-	@echo "		fcst_clean        : FCoE target: clean "
-	@echo "		fcst_extraclean   : FCoE target: clean + clean dependencies"
-	@echo "		fcst_install      : FCoE target: install"
-	@echo "		fcst_uninstall    : FCoE target: uninstall"
+	@echo "		emulex                : make Emulex target"
+	@echo "		emulex_clean          : Emulex target: clean"
+	@echo "		emulex_extraclean     : Emulex target: clean + clean dependencies"
+	@echo "		emulex_install        : Emulex target: install"
+	@echo "		emulex_uninstall      : Emulex target: uninstall"
 	@echo ""
-	@echo "		scst_local	  : make scst_local target"
-	@echo "		scst_local_install : scst_local target: install"
-	@echo "		scst_local_uninstall : scst_local target: uninstall"
+	@echo "		srpt                  : make SRP target"
+	@echo "		srpt_clean            : srp target: clean"
+	@echo "		srpt_extraclean       : srp target: clean + clean dependencies"
+	@echo "		srpt_install          : srp target: install"
+	@echo "		srpt_uninstall        : srp target: uninstall"
 	@echo ""
-	@echo "		usr               : make user space targets"
-	@echo "		usr_clean         : usr target: clean "
-	@echo "		usr_extraclean    : usr target: clean + clean dependencies"
-	@echo "		usr_install       : usr target: install"
-	@echo "		usr_uninstall     : usr target: uninstall"
+	@echo "		fcst                  : make FCoE target"
+	@echo "		fcst_clean            : FCoE target: clean"
+	@echo "		fcst_extraclean       : FCoE target: clean + clean dependencies"
+	@echo "		fcst_install          : FCoE target: install"
+	@echo "		fcst_uninstall        : FCoE target: uninstall"
 	@echo ""
-	@echo "		scst-rpm          : make SCST RPM packages"
-	@echo "		scst-dkms-rpm     : make SCST DKMS RPM packages"
-	@echo "		rpm               : make both SCST and scstadmin RPM packages"
-	@echo "		rpm-dkms          : make both SCST DKMS and scstadmin RPM packages"
+	@echo "		scst_local	      : make scst_local target"
+	@echo "		scst_local_clean      : scst_local target: clean"
+	@echo "		scst_local_extraclean : scst_local target: clean + clean dependencies"
+	@echo "		scst_local_install    : scst_local target: install"
+	@echo "		scst_local_uninstall  : scst_local target: uninstall"
 	@echo ""
-	@echo "		dpkg              : make SCST dpkg packages"
+	@echo "		usr                   : make user space targets"
+	@echo "		usr_clean             : usr target: clean"
+	@echo "		usr_extraclean        : usr target: clean + clean dependencies"
+	@echo "		usr_install           : usr target: install"
+	@echo "		usr_uninstall         : usr target: uninstall"
 	@echo ""
-	@echo "		2perf             : changes debug state to full performance"
-	@echo "		2release          : changes debug state to release"
-	@echo "		2debug            : changes debug state to full debug"
+	@echo "		scst-rpm              : make SCST RPM packages"
+	@echo "		scst-dkms-rpm         : make SCST DKMS RPM packages"
+	@echo "		scstadm-rpm           : make scstadmin RPM packages"
+	@echo "		rpm                   : make both SCST and scstadmin RPM packages"
+	@echo "		rpm-dkms              : make both SCST DKMS and scstadmin RPM packages"
+	@echo ""
+	@echo "		dpkg                  : make SCST dpkg packages"
+	@echo ""
+	@echo "		2perf                 : changes debug state to full performance"
+	@echo "		2release              : changes debug state to release"
+	@echo "		2debug                : changes debug state to full debug"
 	@echo ""
 	@echo "	Note:"
 	@echo "		- install and uninstall may need root privileges"
-
-all install uninstall clean extraclean:
-	-if [ $@ = extraclean ]; then rm -f TAGS tags cscope.out; fi
-	-for d in $(SCST_DIR) $(ISCSI_DIR) $(QLA_DIR) $(SRP_DIR)	    \
-		$(SCST_LOCAL_DIR) $(FCST_DIR) $(USR_DIR) $(SCSTADM_DIR); do \
-		$(MAKE) -j$$(nproc) -C "$$d" $@ || break;		    \
-	done
 
 tags:
 	find . -type f -name "*.[ch]" | ctags --c-kinds=+p --fields=+iaS --extra=+q -e -L-
@@ -180,20 +198,27 @@ cov-build:
 		fi								     \
 	done
 
+all clean extraclean install uninstall:
+	-if [ $@ = extraclean ]; then rm -f TAGS tags cscope.out; fi
+	-for d in $(SCST_DIR) $(ISCSI_DIR) $(QLA_DIR) $(SRP_DIR)	    \
+		$(SCST_LOCAL_DIR) $(FCST_DIR) $(USR_DIR) $(SCSTADM_DIR); do \
+		$(MAKE) -j$$(nproc) -C "$$d" $@ || break;		    \
+	done
+
 scst:
 	cd $(SCST_DIR) && $(MAKE) all
-
-scst_install:
-	cd $(SCST_DIR) && $(MAKE) install
-
-scst_uninstall:
-	cd $(SCST_DIR) && $(MAKE) uninstall
 
 scst_clean:
 	cd $(SCST_DIR) && $(MAKE) clean
 
 scst_extraclean:
 	cd $(SCST_DIR) && $(MAKE) extraclean
+
+scst_install:
+	cd $(SCST_DIR) && $(MAKE) install
+
+scst_uninstall:
+	cd $(SCST_DIR) && $(MAKE) uninstall
 
 docs:
 	cd $(DOC_DIR) && $(MAKE) all
@@ -207,26 +232,20 @@ docs_extraclean:
 scstadm:
 	cd $(SCSTADM_DIR) && $(MAKE) all
 
-scstadm_install:
-	cd $(SCSTADM_DIR) && $(MAKE) install
-
-scstadm_uninstall:
-	cd $(SCSTADM_DIR) && $(MAKE) uninstall
-
 scstadm_clean:
 	cd $(SCSTADM_DIR) && $(MAKE) clean
 
 scstadm_extraclean:
 	cd $(SCSTADM_DIR) && $(MAKE) extraclean
 
+scstadm_install:
+	cd $(SCSTADM_DIR) && $(MAKE) install
+
+scstadm_uninstall:
+	cd $(SCSTADM_DIR) && $(MAKE) uninstall
+
 qla:
 	cd $(QLA_DIR) && $(MAKE) all
-
-qla_install:
-	cd $(QLA_DIR) && $(MAKE) install
-
-qla_uninstall:
-	cd $(QLA_DIR) && $(MAKE) uninstall
 
 qla_clean:
 	cd $(QLA_DIR) && $(MAKE) clean
@@ -234,14 +253,14 @@ qla_clean:
 qla_extraclean:
 	cd $(QLA_DIR) && $(MAKE) extraclean
 
+qla_install:
+	cd $(QLA_DIR) && $(MAKE) install
+
+qla_uninstall:
+	cd $(QLA_DIR) && $(MAKE) uninstall
+
 iscsi:
 	cd $(ISCSI_DIR) && $(MAKE) all
-
-iscsi_install:
-	cd $(ISCSI_DIR) && $(MAKE) install
-
-iscsi_uninstall:
-	cd $(ISCSI_DIR) && $(MAKE) uninstall
 
 iscsi_clean:
 	cd $(ISCSI_DIR) && $(MAKE) clean
@@ -249,14 +268,14 @@ iscsi_clean:
 iscsi_extraclean:
 	cd $(ISCSI_DIR) && $(MAKE) extraclean
 
+iscsi_install:
+	cd $(ISCSI_DIR) && $(MAKE) install
+
+iscsi_uninstall:
+	cd $(ISCSI_DIR) && $(MAKE) uninstall
+
 emulex:
 	cd $(EMULEX_DIR) && $(MAKE) all
-
-emulex_install:
-	cd $(EMULEX_DIR) && $(MAKE) install
-
-emulex_uninstall:
-	cd $(EMULEX_DIR) && $(MAKE) uninstall
 
 emulex_clean:
 	cd $(EMULEX_DIR) && $(MAKE) clean
@@ -264,14 +283,14 @@ emulex_clean:
 emulex_extraclean:
 	cd $(EMULEX_DIR) && $(MAKE) extraclean
 
+emulex_install:
+	cd $(EMULEX_DIR) && $(MAKE) install
+
+emulex_uninstall:
+	cd $(EMULEX_DIR) && $(MAKE) uninstall
+
 srpt:
 	cd $(SRP_DIR) && $(MAKE) all
-
-srpt_install:
-	cd $(SRP_DIR) && $(MAKE) install
-
-srpt_uninstall:
-	cd $(SRP_DIR) && $(MAKE) uninstall
 
 srpt_clean:
 	cd $(SRP_DIR) && $(MAKE) clean
@@ -279,38 +298,20 @@ srpt_clean:
 srpt_extraclean:
 	cd $(SRP_DIR) && $(MAKE) extraclean
 
-scst_local:
-	cd $(SCST_LOCAL_DIR) && $(MAKE) all
+srpt_install:
+	cd $(SRP_DIR) && $(MAKE) install
 
-scst_local_install:
-	cd $(SCST_LOCAL_DIR) && $(MAKE) install
-
-scst_local_uninstall:
-	cd $(SCST_LOCAL_DIR) && $(MAKE) uninstall
-
-scst_local_clean:
-	cd $(SCST_LOCAL_DIR) && $(MAKE) clean
-
-scst_local_extraclean:
-	cd $(SCST_LOCAL_DIR) && $(MAKE) extraclean
-
-usr:
-	cd $(USR_DIR) && $(MAKE)
-
-usr_install:
-	cd $(USR_DIR) && $(MAKE) install
-
-usr_uninstall:
-	cd $(USR_DIR) && $(MAKE) uninstall
-
-usr_clean:
-	cd $(USR_DIR) && $(MAKE) clean
-
-usr_extraclean:
-	cd $(USR_DIR) && $(MAKE) extraclean
+srpt_uninstall:
+	cd $(SRP_DIR) && $(MAKE) uninstall
 
 fcst:
 	cd $(FCST_DIR) && $(MAKE) all
+
+fcst_clean:
+	cd $(FCST_DIR) && $(MAKE) clean
+
+fcst_extraclean:
+	cd $(FCST_DIR) && $(MAKE) extraclean
 
 fcst_install:
 	cd $(FCST_DIR) && $(MAKE) install
@@ -318,11 +319,35 @@ fcst_install:
 fcst_uninstall:
 	cd $(FCST_DIR) && $(MAKE) uninstall
 
-fcst_clean:
-	cd $(FCST_DIR) && $(MAKE) clean
+scst_local:
+	cd $(SCST_LOCAL_DIR) && $(MAKE) all
 
-fcst_extraclean:
-	cd $(FCST_DIR) && $(MAKE) extraclean
+scst_local_clean:
+	cd $(SCST_LOCAL_DIR) && $(MAKE) clean
+
+scst_local_extraclean:
+	cd $(SCST_LOCAL_DIR) && $(MAKE) extraclean
+
+scst_local_install:
+	cd $(SCST_LOCAL_DIR) && $(MAKE) install
+
+scst_local_uninstall:
+	cd $(SCST_LOCAL_DIR) && $(MAKE) uninstall
+
+usr:
+	cd $(USR_DIR) && $(MAKE)
+
+usr_clean:
+	cd $(USR_DIR) && $(MAKE) clean
+
+usr_extraclean:
+	cd $(USR_DIR) && $(MAKE) extraclean
+
+usr_install:
+	cd $(USR_DIR) && $(MAKE) install
+
+usr_uninstall:
+	cd $(USR_DIR) && $(MAKE) uninstall
 
 # Make an SCST source code archive. $(1) is the tar compression option, $(2)
 # is the tar filename compression suffix, $(3) is the version and $(4) is the
@@ -386,9 +411,12 @@ scst-dkms-rpm:
 	    -ba $${name}.spec &&					\
 	rm -f scst-$(VERSION).tar.bz2
 
+scstadm-rpm:
+	$(MAKE) -C scstadmin rpm
+
 rpm:
 	$(MAKE) scst-rpm
-	$(MAKE) -C scstadmin rpm
+	$(MAKE) scstadm-rpm
 	@if [ "$$(id -u)" != 0 ]; then			\
 	    echo;					\
 	    echo "The following RPMs have been built:";	\
@@ -397,7 +425,7 @@ rpm:
 
 rpm-dkms:
 	$(MAKE) scst-dkms-rpm
-	$(MAKE) -C scstadmin rpm
+	$(MAKE) scstadm-rpm
 	@if [ "$$(id -u)" != 0 ]; then			\
 	    echo;					\
 	    echo "The following RPMs have been built:";	\
@@ -471,9 +499,9 @@ dpkg: ../scst_$(VERSION).orig.tar.gz
 
 release-archive:
 	$(MAKE) 2release
-	scripts/generate-release-archive scst "$(VERSION_WITHOUT_REVISION)"
-	md5sum ../scst-$(VERSION_WITHOUT_REVISION).tar.bz2	\
-	  > ../scst-$(VERSION_WITHOUT_REVISION).tar.bz2.md5sum
+	scripts/generate-release-archive scst "$(RELEASE_VERSION)"
+	md5sum ../scst-$(RELEASE_VERSION).tar.bz2	\
+	  > ../scst-$(RELEASE_VERSION).tar.bz2.md5sum
 	$(MAKE) 2debug
 
 multiple-release-archives:
@@ -495,16 +523,16 @@ multiple-release-archives:
 2debug:
 	cd $(SCST_DIR) && $(MAKE) $@
 
-.PHONY: all install uninstall clean extraclean tags help \
-	qla qla_install qla_uninstall qla_clean qla_extraclean \
-	iscsi iscsi_install iscsi_uninstall iscsi_clean iscsi_extraclean \
-	emulex emulex_install emulex_uninstall emulex_clean emulex_extraclean \
-	scst scst_install scst_uninstall scst_clean scst_extraclean \
+.PHONY: help tags cov-build all clean extraclean install uninstall \
+	scst scst_clean scst_extraclean scst_install scst_uninstall \
 	docs docs_clean docs_extraclean \
-	scstadm scstadm_install scstadm_uninstall scstadm_clean scstadm_extraclean \
-	srpt srpt_install srpt_uninstall srpt_clean srpt_extraclean \
-	usr usr_install usr_uninstall usr_clean usr_extraclean \
-	scst_local scst_local_install scst_local_uninstall scst_local_clean scst_local_extraclean \
-	fcst fcst_install fcst_uninstall fcst_clean fcst_extraclean \
-	scst-rpm scst-dkms-rpm dpkg \
+	scstadm scstadm_clean scstadm_extraclean scstadm_install scstadm_uninstall \
+	qla qla_clean qla_extraclean qla_install qla_uninstall \
+	iscsi iscsi_clean iscsi_extraclean iscsi_install iscsi_uninstall \
+	emulex emulex_clean emulex_extraclean emulex_install emulex_uninstall \
+	srpt srpt_clean srpt_extraclean srpt_install srpt_uninstall \
+	fcst fcst_clean fcst_extraclean fcst_install fcst_uninstall \
+	scst_local scst_local_clean scst_local_extraclean scst_local_install scst_local_uninstall \
+	usr usr_clean usr_extraclean usr_install usr_uninstall \
+	scst-rpm scst-dkms-rpm scstadm-rpm rpm rpm-dkms dpkg \
 	2perf 2release 2debug

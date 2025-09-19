@@ -236,22 +236,22 @@ const struct scst_opcode_descriptor scst_op_descr_send_diagnostic = {
 EXPORT_SYMBOL(scst_op_descr_send_diagnostic);
 
 const struct scst_opcode_descriptor scst_op_descr_reserve6 = {
-	.od_opcode = RESERVE,
+	.od_opcode = RESERVE_6,
 	.od_support = 3, /* supported as in the standard */
 	.od_cdb_size = 6,
 	.od_nominal_timeout = SCST_DEFAULT_NOMINAL_TIMEOUT_SEC,
 	.od_recommended_timeout = SCST_GENERIC_DISK_SMALL_TIMEOUT/HZ,
-	.od_cdb_usage_bits = { RESERVE, 0, 0, 0, 0, SCST_OD_DEFAULT_CONTROL_BYTE },
+	.od_cdb_usage_bits = { RESERVE_6, 0, 0, 0, 0, SCST_OD_DEFAULT_CONTROL_BYTE },
 };
 EXPORT_SYMBOL(scst_op_descr_reserve6);
 
 const struct scst_opcode_descriptor scst_op_descr_release6 = {
-	.od_opcode = RELEASE,
+	.od_opcode = RELEASE_6,
 	.od_support = 3, /* supported as in the standard */
 	.od_cdb_size = 6,
 	.od_nominal_timeout = SCST_DEFAULT_NOMINAL_TIMEOUT_SEC,
 	.od_recommended_timeout = SCST_GENERIC_DISK_SMALL_TIMEOUT/HZ,
-	.od_cdb_usage_bits = { RELEASE, 0, 0, 0, 0, SCST_OD_DEFAULT_CONTROL_BYTE },
+	.od_cdb_usage_bits = { RELEASE_6, 0, 0, 0, 0, SCST_OD_DEFAULT_CONTROL_BYTE },
 };
 EXPORT_SYMBOL(scst_op_descr_release6);
 
@@ -456,24 +456,24 @@ static int get_cdb_info_dyn_runtime_attr(struct scst_cmd *cmd,
 
 struct scst_sdbops {
 	uint8_t ops;		/* SCSI-2 op codes */
-	uint8_t devkey[16];	/* Key for every device type M,O,V,R
-				 * type_disk      devkey[0]
-				 * type_tape      devkey[1]
-				 * type_printer   devkey[2]
-				 * type_processor devkey[3]
-				 * type_worm      devkey[4]
-				 * type_cdrom     devkey[5]
-				 * type_scanner   devkey[6]
-				 * type_mod       devkey[7]
-				 * type_changer   devkey[8]
-				 * type_commdev   devkey[9]
-				 * type_reserv    devkey[A]
-				 * type_reserv    devkey[B]
-				 * type_raid      devkey[C]
-				 * type_enclosure devkey[D]
-				 * type_reserv    devkey[E]
-				 * type_reserv    devkey[F]
-				 */
+	uint8_t devkey[16] __nonstring;	/* Key for every device type M,O,V,R
+					 * type_disk      devkey[0]
+					 * type_tape      devkey[1]
+					 * type_printer   devkey[2]
+					 * type_processor devkey[3]
+					 * type_worm      devkey[4]
+					 * type_cdrom     devkey[5]
+					 * type_scanner   devkey[6]
+					 * type_mod       devkey[7]
+					 * type_changer   devkey[8]
+					 * type_commdev   devkey[9]
+					 * type_reserv    devkey[A]
+					 * type_reserv    devkey[B]
+					 * type_raid      devkey[C]
+					 * type_enclosure devkey[D]
+					 * type_reserv    devkey[E]
+					 * type_reserv    devkey[F]
+					 */
 	uint8_t info_lba_off;	/* LBA offset in cdb */
 	uint8_t info_lba_len;	/* LBA length in cdb */
 	uint8_t info_len_off;	/* length offset in cdb */
@@ -727,14 +727,14 @@ static const struct scst_sdbops scst_scsi_op_table[] = {
 	 .info_len_off = 4, .info_len_len = 1,
 	 .get_cdb_info = get_cdb_info_len_1},
 	{.ops = 0x16, .devkey = "MMMMMMMMMMMMMMMM",
-	 .info_op_name = "RESERVE",
+	 .info_op_name = "RESERVE(6)",
 	 .info_data_direction = SCST_DATA_NONE,
 	 .info_op_flags = SCST_SMALL_TIMEOUT|SCST_LOCAL_CMD|SCST_SERIALIZED|
 			 SCST_WRITE_EXCL_ALLOWED|SCST_EXCL_ACCESS_ALLOWED|
 			 SCST_SCSI_ATOMIC/* see comment in scst_cmd_overlap() */,
 	 .get_cdb_info = get_cdb_info_none},
 	{.ops = 0x17, .devkey = "MMMMMMMMMMMMMMMM",
-	 .info_op_name = "RELEASE",
+	 .info_op_name = "RELEASE(6)",
 	 .info_data_direction = SCST_DATA_NONE,
 	 .info_op_flags = SCST_SMALL_TIMEOUT|SCST_LOCAL_CMD|SCST_SERIALIZED|
 		SCST_REG_RESERVE_ALLOWED|SCST_WRITE_EXCL_ALLOWED|
@@ -2609,7 +2609,7 @@ struct scst_aen *scst_alloc_aen(struct scst_session *sess,
 	aen->lun = scst_pack_lun(unpacked_lun, sess->acg->addr_method);
 
 out:
-	TRACE_EXIT_HRES((unsigned long)aen);
+	TRACE_EXIT_HRES(aen);
 	return aen;
 }
 
@@ -5154,7 +5154,7 @@ static struct scst_tgt_dev *scst_find_shared_io_tgt_dev(
 	}
 
 out:
-	TRACE_EXIT_HRES((unsigned long)res);
+	TRACE_EXIT_HRES(res);
 	return res;
 
 found:
@@ -5934,7 +5934,7 @@ struct scst_cmd *__scst_create_prepare_internal_cmd(const uint8_t *cdb,
 	scst_set_cmd_state(res, SCST_CMD_STATE_PARSE);
 
 out:
-	TRACE_EXIT_HRES((unsigned long)res);
+	TRACE_EXIT_HRES(res);
 	return res;
 }
 
@@ -5955,7 +5955,7 @@ static struct scst_cmd *scst_create_prepare_internal_cmd(
 	res->atomic = scst_cmd_atomic(orig_cmd);
 
 out:
-	TRACE_EXIT_HRES((unsigned long)res);
+	TRACE_EXIT_HRES(res);
 	return res;
 }
 
@@ -7257,23 +7257,23 @@ static void scst_send_release(struct scst_device *dev)
 
 	for (i = 0; i < 5; i++) {
 		memset(cdb, 0, sizeof(cdb));
-		cdb[0] = RELEASE;
+		cdb[0] = RELEASE_6;
 		cdb[1] = (scsi_dev->scsi_level <= SCSI_2) ?
 		    ((scsi_dev->lun << 5) & 0xe0) : 0;
 
 		memset(sense, 0, sizeof(sense));
 
-		TRACE(TRACE_DEBUG | TRACE_SCSI, "%s", "Sending RELEASE req to "
-			"SCSI mid-level");
+		TRACE(TRACE_DEBUG | TRACE_SCSI,
+		      "Sending RELEASE_6 req to SCSI mid-level");
 		rc = scst_scsi_execute_cmd(scsi_dev, cdb, DMA_FROM_DEVICE,
 					   NULL, 0, sense, 15, 0, 0);
-		TRACE_DBG("RELEASE done: %x", rc);
+		TRACE_DBG("RELEASE_6 done: %x", rc);
 
 		if (scsi_status_is_good(rc))
 			break;
 
-		PRINT_ERROR("RELEASE failed: %d", rc);
-		PRINT_BUFFER("RELEASE sense", sense, sizeof(sense));
+		PRINT_ERROR("RELEASE_6 failed: %d", rc);
+		PRINT_BUFFER("RELEASE_6 sense", sense, sizeof(sense));
 		scst_check_internal_sense(dev, rc, sense, sizeof(sense));
 	}
 
@@ -8401,8 +8401,9 @@ scst_free_bio(struct bio *bio)
 #endif
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0) ||			\
-(defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0) ||	\
+	(defined(CONFIG_SUSE_KERNEL) &&			\
+	 LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 static struct request *blk_make_request(struct request_queue *q,
 					struct bio *bio,
 					gfp_t gfp_mask)
@@ -8450,7 +8451,9 @@ static struct request *blk_make_request(struct request_queue *q,
 static inline unsigned int
 queue_dma_pad_mask(const struct request_queue *q)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 6))
 	return q->dma_pad_mask;
 #else
 	return q->limits.dma_pad_mask;
@@ -8554,16 +8557,20 @@ static struct request *__blk_map_kern_sg(struct request_queue *q,
 
 			TRACE_DBG("len %zd, bytes %zd, offset %zd", len, bytes, offset);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 			rc = bio_add_pc_page(q, bio, page, bytes, offset);
+#else
+			rc = bio_add_page(bio, page, bytes, offset);
+#endif
 			if (rc < bytes) {
 				if (unlikely(need_new_bio || rc < 0)) {
 					rq = ERR_PTR(rc < 0 ? rc : -EIO);
 					goto out_free_bios;
-				} else {
-					need_new_bio = true;
-					len -= rc;
-					offset += rc;
 				}
+
+				need_new_bio = true;
+				offset += rc;
+				len -= rc;
 			} else {
 				need_new_bio = false;
 				offset = 0;
@@ -11934,8 +11941,6 @@ static int scst_set_cmd_from_cdb_info(struct scst_cmd *cmd,
 	int res;
 
 	cmd->cdb_len = SCST_GET_CDB_LEN(cmd->cdb[0]);
-	cmd->cmd_naca = (cmd->cdb[cmd->cdb_len - 1] & CONTROL_BYTE_NACA_BIT);
-	cmd->cmd_linked = (cmd->cdb[cmd->cdb_len - 1] & CONTROL_BYTE_LINK_BIT);
 	cmd->op_name = ptr->info_op_name;
 	cmd->data_direction = ptr->info_data_direction;
 	cmd->op_flags = ptr->info_op_flags | SCST_INFO_VALID;
@@ -11945,6 +11950,15 @@ static int scst_set_cmd_from_cdb_info(struct scst_cmd *cmd,
 	cmd->len_len = ptr->info_len_len;
 	cmd->log2_max_buf_len = ptr->log2_max_buf_len;
 	res = (*ptr->get_cdb_info)(cmd, ptr);
+
+	/* get_cdb_info() may override cdb_len, so do this after */
+	if (likely(cmd->cdb_len != 0)) {
+		unsigned int control = (cmd->cdb[0] == 0x7F) ? cmd->cdb[1] :
+			cmd->cdb[cmd->cdb_len - 1];
+		cmd->cmd_naca = !!(control & CONTROL_BYTE_NACA_BIT);
+		cmd->cmd_linked = !!(control & CONTROL_BYTE_LINK_BIT);
+	}
+
 	if (!cmd->log2_max_buf_len ||
 	    cmd->bufflen <= (1U << cmd->log2_max_buf_len))
 		return res;
@@ -12039,9 +12053,6 @@ static int get_cdb_info_var_len(struct scst_cmd *cmd,
 	}
 
 	res = scst_set_cmd_from_cdb_info(cmd, ptr);
-
-	cmd->cmd_naca = (cmd->cdb[1] & CONTROL_BYTE_NACA_BIT);
-	cmd->cmd_linked = (cmd->cdb[1] & CONTROL_BYTE_LINK_BIT);
 
 out:
 	TRACE_EXIT_RES(res);
@@ -13616,7 +13627,7 @@ restart:
 	}
 
 out:
-	TRACE_EXIT_HRES((unsigned long)res);
+	TRACE_EXIT_HRES(res);
 	return res;
 }
 
@@ -13632,7 +13643,7 @@ struct scst_cmd *__scst_check_deferred_commands(
 	res = __scst_check_deferred_commands_locked(order_data, return_first);
 	spin_unlock_irq(&order_data->sn_lock);
 
-	TRACE_EXIT_HRES((unsigned long)res);
+	TRACE_EXIT_HRES(res);
 	return res;
 }
 
@@ -15361,14 +15372,16 @@ out_unlock:
 
 void scst_vfs_unlink_and_put(struct path *path)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0) && \
-	(!defined(RHEL_MAJOR) || RHEL_MAJOR -0 < 7) && \
-	(!defined(CONFIG_SUSE_KERNEL) || \
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0) &&	\
+	(!defined(RHEL_MAJOR) || RHEL_MAJOR -0 < 7) &&	\
+	(!defined(CONFIG_SUSE_KERNEL) ||		\
 	 LINUX_VERSION_CODE < KERNEL_VERSION(3, 12, 0))
 	vfs_unlink(path->dentry->d_parent->d_inode, path->dentry);
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0)
 	vfs_unlink(path->dentry->d_parent->d_inode, path->dentry, NULL);
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 6))
 	vfs_unlink(&init_user_ns, path->dentry->d_parent->d_inode, path->dentry,
 		   NULL);
 #else
@@ -15846,7 +15859,7 @@ static void tm_dbg_deinit_tgt_dev(struct scst_tgt_dev *tgt_dev)
 		unsigned long flags;
 
 		TRACE_MGMT_DBG("Deinit TM debugging tgt_dev %p", tgt_dev);
-		del_timer_sync(&tm_dbg_timer);
+		timer_delete_sync(&tm_dbg_timer);
 		spin_lock_irqsave(&scst_tm_dbg_lock, flags);
 		tm_dbg_tgt_dev = NULL;
 		spin_unlock_irqrestore(&scst_tm_dbg_lock, flags);
@@ -15965,7 +15978,7 @@ static void tm_dbg_change_state(unsigned long *flags)
 
 	TRACE_MGMT_DBG("%s", "Deleting timer");
 	spin_unlock_irqrestore(&scst_tm_dbg_lock, *flags);
-	del_timer_sync(&tm_dbg_timer);
+	timer_delete_sync(&tm_dbg_timer);
 	spin_lock_irqsave(&scst_tm_dbg_lock, *flags);
 	return;
 }

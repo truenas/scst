@@ -3954,13 +3954,12 @@ static ssize_t show_comp_v_mask(struct kobject *kobj,
 	if (!sport)
 		goto out;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 0, 0)
-	res = cpumask_scnprintf(buf, PAGE_SIZE, &sport->comp_v_mask);
+	res = cpumask_scnprintf(buf, SCST_SYSFS_BLOCK_SIZE, &sport->comp_v_mask);
 #else
-	res = scnprintf(buf, PAGE_SIZE, "%*pb",
-			cpumask_pr_args(&sport->comp_v_mask));
+	res = sysfs_emit(buf, "%*pb",
+			 cpumask_pr_args(&sport->comp_v_mask));
 #endif
-	res += scnprintf(&buf[res], PAGE_SIZE - res, "\n%s\n",
-			 SCST_SYSFS_KEY_MARK);
+	res += sysfs_emit_at(buf, res, "\n%s\n", SCST_SYSFS_KEY_MARK);
 
 out:
 	return res;
@@ -4013,13 +4012,13 @@ static ssize_t srpt_show_device(struct kobject *kobj,
 						 tgt_kobj);
 	struct srpt_port *sport = scst_tgt_get_tgt_priv(scst_tgt);
 	struct srpt_device *sdev;
-	int res = -E_TGT_PRIV_NOT_YET_SET;
+	ssize_t res = -E_TGT_PRIV_NOT_YET_SET;
 
 	if (!sport)
 		goto out;
 
 	sdev = sport->sdev;
-	res = sprintf(buf, "%s\n", dev_name(&sdev->device->dev));
+	res = sysfs_emit(buf, "%s\n", dev_name(&sdev->device->dev));
 
 out:
 	return res;
@@ -4039,7 +4038,7 @@ static ssize_t srpt_show_link_layer(struct kobject *kobj,
 						 tgt_kobj);
 	struct srpt_port *sport = scst_tgt_get_tgt_priv(scst_tgt);
 	const char *lln = "Unknown";
-	int res = -E_TGT_PRIV_NOT_YET_SET;
+	ssize_t res = -E_TGT_PRIV_NOT_YET_SET;
 
 	if (!sport)
 		goto out;
@@ -4055,7 +4054,7 @@ static ssize_t srpt_show_link_layer(struct kobject *kobj,
 	default:
 		break;
 	}
-	res = sprintf(buf, "%s\n", lln);
+	res = sysfs_emit(buf, "%s\n", lln);
 
 out:
 	return res;
@@ -4064,24 +4063,23 @@ out:
 static struct kobj_attribute srpt_link_layer_attr =
 	__ATTR(link_layer, S_IRUGO, srpt_show_link_layer, NULL);
 
-static ssize_t show_port_id(struct kobject *kobj, struct kobj_attribute *attr,
-			    char *buf)
+static ssize_t show_port_id(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	struct scst_tgt *scst_tgt = container_of(kobj, struct scst_tgt,
-						 tgt_kobj);
+	struct scst_tgt *scst_tgt = container_of(kobj, struct scst_tgt, tgt_kobj);
 	struct srpt_port *sport = scst_tgt_get_tgt_priv(scst_tgt);
-	int res = -E_TGT_PRIV_NOT_YET_SET;
+	ssize_t res = -E_TGT_PRIV_NOT_YET_SET;
 
 	if (!sport)
 		goto out;
 
 	mutex_lock(&sport->mutex);
-	snprintf(buf, PAGE_SIZE, "%s\n%s", sport->port_id,
-		 strcmp(sport->port_id, DEFAULT_SRPT_ID_STRING) ?
-		 SCST_SYSFS_KEY_MARK "\n" : "");
-	mutex_unlock(&sport->mutex);
 
-	res = strlen(buf);
+	res = sysfs_emit(buf, "%s\n", sport->port_id);
+
+	if (strcmp(sport->port_id, DEFAULT_SRPT_ID_STRING))
+		res += sysfs_emit_at(buf, res, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	mutex_unlock(&sport->mutex);
 
 out:
 	return res;
@@ -4125,25 +4123,23 @@ static ssize_t show_login_info(struct kobject *kobj,
 	struct scst_tgt *scst_tgt = container_of(kobj, struct scst_tgt,
 						 tgt_kobj);
 	struct srpt_port *sport = scst_tgt_get_tgt_priv(scst_tgt);
-	int res = -E_TGT_PRIV_NOT_YET_SET;
+	ssize_t res = -E_TGT_PRIV_NOT_YET_SET;
 
 	if (!sport)
 		goto out;
 
-	res = sprintf(buf,
-		      "tid_ext=%016llx,ioc_guid=%016llx,pkey=ffff,"
-		      "dgid=%04x%04x%04x%04x%04x%04x%04x%04x,"
-		      "service_id=%016llx\n",
-		      srpt_service_guid, srpt_service_guid,
-		      be16_to_cpu(((__be16 *) sport->gid.raw)[0]),
-		      be16_to_cpu(((__be16 *) sport->gid.raw)[1]),
-		      be16_to_cpu(((__be16 *) sport->gid.raw)[2]),
-		      be16_to_cpu(((__be16 *) sport->gid.raw)[3]),
-		      be16_to_cpu(((__be16 *) sport->gid.raw)[4]),
-		      be16_to_cpu(((__be16 *) sport->gid.raw)[5]),
-		      be16_to_cpu(((__be16 *) sport->gid.raw)[6]),
-		      be16_to_cpu(((__be16 *) sport->gid.raw)[7]),
-		      srpt_service_guid);
+	res = sysfs_emit(buf,
+			 "tid_ext=%016llx,ioc_guid=%016llx,pkey=ffff,dgid=%04x%04x%04x%04x%04x%04x%04x%04x,service_id=%016llx\n",
+			 srpt_service_guid, srpt_service_guid,
+			 be16_to_cpu(((__be16 *) sport->gid.raw)[0]),
+			 be16_to_cpu(((__be16 *) sport->gid.raw)[1]),
+			 be16_to_cpu(((__be16 *) sport->gid.raw)[2]),
+			 be16_to_cpu(((__be16 *) sport->gid.raw)[3]),
+			 be16_to_cpu(((__be16 *) sport->gid.raw)[4]),
+			 be16_to_cpu(((__be16 *) sport->gid.raw)[5]),
+			 be16_to_cpu(((__be16 *) sport->gid.raw)[6]),
+			 be16_to_cpu(((__be16 *) sport->gid.raw)[7]),
+			 srpt_service_guid);
 
 out:
 	return res;
@@ -4171,7 +4167,8 @@ static ssize_t show_req_lim(struct kobject *kobj,
 	ch = scst_sess_get_tgt_priv(sess);
 	if (!ch)
 		return -ENOENT;
-	return sprintf(buf, "%d\n", ch->req_lim);
+
+	return sysfs_emit(buf, "%d\n", ch->req_lim);
 }
 
 static ssize_t show_req_lim_delta(struct kobject *kobj,
@@ -4184,7 +4181,8 @@ static ssize_t show_req_lim_delta(struct kobject *kobj,
 	ch = scst_sess_get_tgt_priv(sess);
 	if (!ch)
 		return -ENOENT;
-	return sprintf(buf, "%d\n", ch->req_lim_delta);
+
+	return sysfs_emit(buf, "%d\n", ch->req_lim_delta);
 }
 
 static ssize_t show_ch_state(struct kobject *kobj, struct kobj_attribute *attr,
@@ -4197,7 +4195,8 @@ static ssize_t show_ch_state(struct kobject *kobj, struct kobj_attribute *attr,
 	ch = scst_sess_get_tgt_priv(sess);
 	if (!ch)
 		return -ENOENT;
-	return sprintf(buf, "%s\n", get_ch_state_name(ch->state));
+
+	return sysfs_emit(buf, "%s\n", get_ch_state_name(ch->state));
 }
 
 static ssize_t show_comp_vector(struct kobject *kobj,
@@ -4207,8 +4206,12 @@ static ssize_t show_comp_vector(struct kobject *kobj,
 	struct srpt_rdma_ch *ch;
 
 	sess = container_of(kobj, struct scst_session, sess_kobj);
+
 	ch = scst_sess_get_tgt_priv(sess);
-	return ch ? sprintf(buf, "%u\n", ch->comp_vector) : -ENOENT;
+	if (!ch)
+		return -ENOENT;
+
+	return sysfs_emit(buf, "%u\n", ch->comp_vector);
 }
 
 static const struct kobj_attribute srpt_req_lim_attr =

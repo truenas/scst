@@ -37,9 +37,13 @@
 #include <linux/iocontext.h>
 #include <linux/kobject_ns.h>
 #include <linux/scatterlist.h>	/* struct scatterlist */
+#include <linux/shrinker.h>
 #include <linux/slab.h>		/* kmalloc() */
 #include <linux/stddef.h>	/* sizeof_field() */
+#include <linux/string.h>
+#include <linux/sysfs.h>
 #include <linux/timer.h>
+#include <linux/usb/quirks.h>
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 #include <linux/writeback.h>	/* sync_page_range() */
@@ -419,6 +423,14 @@ static inline void be32_to_cpu_array(u32 *dst, const __be32 *src, size_t len)
 #endif
 #endif
 
+/*
+ * See also commit 92676236917d ("Compiler Attributes: add support for
+ * __nonstring (gcc >= 8)") # v4.20.
+ */
+#ifndef __nonstring
+#define __nonstring
+#endif
+
 /* <linux/debugfs.h> */
 
 /*
@@ -677,7 +689,9 @@ static inline u32 int_sqrt64(u64 x)
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 6))
 static inline long get_user_pages_backport(unsigned long start,
 					   unsigned long nr_pages,
 					   unsigned int gup_flags,
@@ -1487,7 +1501,8 @@ static inline void __user *KERNEL_SOCKPTR(void *p)
 /* <linux/string.h> */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0) &&	\
-	(!defined(RHEL_MAJOR) || RHEL_MAJOR -0 < 7)
+	(!defined(RHEL_MAJOR) || RHEL_MAJOR -0 < 7) &&	\
+	(!defined(UEK_KABI_RENAME) || !defined(USB_QUIRK_NO_LPM))
 /* See also commit e9d408e107db ("new helper: memdup_user_nul()") # v4.5 */
 static inline void *memdup_user_nul(const void __user *src, size_t len)
 {
@@ -1557,6 +1572,82 @@ static inline ssize_t strscpy(char *dest, const char *src, size_t count)
 #define __ATTR_RW(_name) __ATTR(_name, 0644, _name##_show, _name##_store)
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0) &&			\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(4, 9, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 260)) &&		\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(4, 14, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 224)) &&		\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(4, 19, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 179)) &&		\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(5, 4, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 103)) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||					\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(8, 5)) &&		\
+	!defined(UEK_KABI_RENAME)
+/*
+ * See also commit 2efc459d06f1 ("sysfs: Add sysfs_emit and sysfs_emit_at to format sysfs output")
+ * # v5.10.
+ * See also commit f3c3dcf35532 # v4.9.260.
+ * See also commit 390881843b4f # v4.14.224.
+ * See also commit cb1f69d53ac8 # v4.19.179.
+ * See also commit 5f4243642873 # v5.4.103.
+ */
+static inline __printf(2, 3)
+int sysfs_emit(char *buf, const char *fmt, ...)
+{
+	va_list args;
+	int len;
+
+	if (WARN(!buf ||
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
+		/*
+		 * For kernel releases older than 4.20, using the SLUB allocator will cause
+		 * this alignment check to fail as that allocator did NOT align kmalloc
+		 * allocations on a PAGE_SIZE boundary.
+		 */
+		 false,
+#else
+		 offset_in_page(buf),
+#endif
+		 "invalid sysfs_emit: buf:%p\n", buf))
+		return 0;
+
+	va_start(args, fmt);
+	len = vscnprintf(buf, PAGE_SIZE, fmt, args);
+	va_end(args);
+
+	return len;
+}
+
+static inline __printf(3, 4)
+int sysfs_emit_at(char *buf, int at, const char *fmt, ...)
+{
+	va_list args;
+	int len;
+
+	if (WARN(!buf ||
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
+		/*
+		 * For kernel releases older than 4.20, using the SLUB allocator will cause
+		 * this alignment check to fail as that allocator did NOT align kmalloc
+		 * allocations on a PAGE_SIZE boundary.
+		 */
+		 false ||
+#else
+		 offset_in_page(buf) ||
+#endif
+		 at < 0 || at >= PAGE_SIZE,
+		 "invalid sysfs_emit_at: buf:%p at:%d\n", buf, at))
+		return 0;
+
+	va_start(args, fmt);
+	len = vscnprintf(buf + at, PAGE_SIZE - at, fmt, args);
+	va_end(args);
+
+	return len;
+}
+#endif
+
 /* <linux/t10-pi.h> */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
@@ -1568,6 +1659,53 @@ struct t10_pi_tuple {
 #endif
 
 /* <linux/timer.h> */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0) &&			\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(4, 19, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 312)) &&		\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(5, 4, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 274)) &&		\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(5, 10, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 215)) &&		\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(5, 15, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 154)) &&		\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(6, 1, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 84)) &&		\
+	(!defined(RHEL_MAJOR) || RHEL_MAJOR -0 < 8 ||			\
+	 RHEL_MAJOR -0 == 8 && RHEL_MINOR -0 < 9 ||			\
+	 RHEL_MAJOR -0 == 9 && RHEL_MINOR -0 < 3) &&			\
+	(!defined(UEK_KABI_RENAME) ||					\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 17))
+/*
+ * See also commit 9b13df3fb64e ("timers: Rename del_timer_sync() to
+ * timer_delete_sync()") # v6.2.
+ * See also commit 48a8a5393960 # v4.19.312.
+ * See also commit df4209170b6c # v5.4.274.
+ * See also commit d8166e8adb7f # v5.10.215.
+ * See also commit 2382f2e45c71 # v5.15.154.
+ * See also commit 113d5341ee12 # v6.1.84.
+ */
+static inline int timer_delete_sync(struct timer_list *timer)
+{
+	return del_timer_sync(timer);
+}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0) &&			\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(6, 1, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 91)) &&		\
+	(!defined(RHEL_MAJOR) || RHEL_MAJOR -0 < 8 ||			\
+	 RHEL_MAJOR -0 == 8 && RHEL_MINOR -0 < 9 ||			\
+	 RHEL_MAJOR -0 == 9 && RHEL_MINOR -0 < 3)
+/*
+ * See also commit bb663f0f3c39 ("timers: Rename del_timer() to timer_delete()") # v6.2.
+ * See also commit b086d1e82fcd # v6.1.91.
+ */
+static inline int timer_delete(struct timer_list *timer)
+{
+	return del_timer(timer);
+}
+#endif
 
 /*
  * See also commit 686fef928bba ("timer: Prepare to change timer callback
@@ -1593,6 +1731,14 @@ struct t10_pi_tuple {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
 #define from_timer(var, callback_timer, timer_fieldname)		\
 	container_of(callback_timer, typeof(*var), timer_fieldname)
+#endif
+
+/*
+ * See also commit 41cb08555c41 ("treewide, timers: Rename from_timer() to
+ * timer_container_of()") # v6.16.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
+#define timer_container_of from_timer
 #endif
 
 /*
@@ -1824,6 +1970,19 @@ static inline void scsi_done(struct scsi_cmnd *cmd)
 {
 	return cmd->scsi_done(cmd);
 }
+#endif
+
+/* <scsi/scsi_proto.h> */
+
+/*
+ * See also commit 0ea163a18b17 ("scsi: usb: Rename the RESERVE and RELEASE constants") # v6.15.
+ */
+#ifndef RESERVE_6
+#define RESERVE_6	0x16
+#endif
+
+#ifndef RELEASE_6
+#define RELEASE_6	0x17
 #endif
 
 /* <scsi/scsi_request.h> */

@@ -244,22 +244,26 @@ out:
 static ssize_t scst_local_version_show(struct kobject *kobj, struct kobj_attribute *attr,
 				       char *buf)
 {
-	sprintf(buf, "%s/%s\n", SCST_LOCAL_VERSION, scst_local_version_date);
+	ssize_t ret = 0;
+
+	ret += sysfs_emit_at(buf, ret, "%s/%s\n",
+			     SCST_LOCAL_VERSION, scst_local_version_date);
 
 #ifdef CONFIG_SCST_EXTRACHECKS
-	strcat(buf, "EXTRACHECKS\n");
+	ret += sysfs_emit_at(buf, ret, "EXTRACHECKS\n");
 #endif
 
 #ifdef CONFIG_SCST_TRACING
-	strcat(buf, "TRACING\n");
+	ret += sysfs_emit_at(buf, ret, "TRACING\n");
 #endif
 
 #ifdef CONFIG_SCST_DEBUG
-	strcat(buf, "DEBUG\n");
+	ret += sysfs_emit_at(buf, ret, "DEBUG\n");
 #endif
 
 	TRACE_EXIT();
-	return strlen(buf);
+
+	return ret;
 }
 
 static struct kobj_attribute scst_local_version_attr =
@@ -267,10 +271,10 @@ static struct kobj_attribute scst_local_version_attr =
 
 static ssize_t scst_local_stats_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return sprintf(buf,
-		       "Aborts: %d, Device Resets: %d, Target Resets: %d\n",
-		       atomic_read(&num_aborts), atomic_read(&num_dev_resets),
-		       atomic_read(&num_target_resets));
+	return sysfs_emit(buf,
+			  "Aborts: %d, Device Resets: %d, Target Resets: %d\n",
+			  atomic_read(&num_aborts), atomic_read(&num_dev_resets),
+			  atomic_read(&num_target_resets));
 }
 
 static struct kobj_attribute scst_local_stats_attr =
@@ -304,10 +308,10 @@ static ssize_t scst_local_scsi_transport_version_show(struct kobject *kobj,
 		goto out_up;
 
 	if (tgt->scsi_transport_version != 0)
-		res = sprintf(buf, "0x%x\n%s", tgt->scsi_transport_version,
-			      SCST_SYSFS_KEY_MARK "\n");
+		res = sysfs_emit(buf, "0x%x\n%s\n",
+				 tgt->scsi_transport_version, SCST_SYSFS_KEY_MARK);
 	else
-		res = sprintf(buf, "0x%x\n", 0x0BE0); /* SAS */
+		res = sysfs_emit(buf, "0x%x\n", 0x0BE0); /* SAS */
 
 out_up:
 	up_read(&scst_local_exit_rwsem);
@@ -372,8 +376,10 @@ static ssize_t scst_local_phys_transport_version_show(struct kobject *kobj,
 	if (!tgt)
 		goto out_up;
 
-	res = sprintf(buf, "0x%x\n%s", tgt->phys_transport_version,
-		      tgt->phys_transport_version != 0 ? SCST_SYSFS_KEY_MARK "\n" : "");
+	res = sysfs_emit(buf, "0x%x\n", tgt->phys_transport_version);
+
+	if (tgt->phys_transport_version != 0)
+		res += sysfs_emit_at(buf, res, "%s\n", SCST_SYSFS_KEY_MARK);
 
 out_up:
 	up_read(&scst_local_exit_rwsem);
@@ -433,12 +439,15 @@ static const struct attribute *scst_local_tgt_attrs[] = {
 
 static ssize_t host_no_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	struct scst_session *scst_sess =
-		container_of(kobj, struct scst_session, sess_kobj);
+	struct scst_session *scst_sess = container_of(kobj, struct scst_session, sess_kobj);
 	struct scst_local_sess *sess = scst_sess_get_tgt_priv(scst_sess);
-	struct Scsi_Host *host = sess->shost;
+	struct Scsi_Host *host;
 
-	return host ? snprintf(buf, PAGE_SIZE, "%u\n", host->host_no) : -EINVAL;
+	host = sess->shost;
+	if (!host)
+		return -EINVAL;
+
+	return sysfs_emit(buf, "%u\n", host->host_no);
 }
 
 static struct kobj_attribute scst_local_host_no_attr = __ATTR_RO(host_no);
@@ -446,11 +455,11 @@ static struct kobj_attribute scst_local_host_no_attr = __ATTR_RO(host_no);
 static ssize_t scst_local_transport_id_show(struct kobject *kobj, struct kobj_attribute *attr,
 					    char *buf)
 {
-	ssize_t res;
 	struct scst_session *scst_sess;
 	struct scst_local_sess *sess;
 	uint8_t *tr_id;
 	int tr_id_len, i;
+	ssize_t res;
 
 	if (down_read_trylock(&scst_local_exit_rwsem) == 0)
 		return -ENOENT;
@@ -471,7 +480,7 @@ static ssize_t scst_local_transport_id_show(struct kobject *kobj, struct kobj_at
 
 	res = 0;
 	for (i = 0; i < tr_id_len; i++)
-		res += sprintf(&buf[res], "%c", tr_id[i]);
+		res += sysfs_emit_at(buf, res, "%c", tr_id[i]);
 
 	if (!sess->transport_id)
 		kfree(tr_id);
@@ -1023,7 +1032,9 @@ out:
 
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) */
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 6))
 static int scst_local_slave_alloc(struct scsi_device *sdev)
 {
 	struct request_queue *q = sdev->request_queue;
@@ -1050,7 +1061,11 @@ static int scst_local_slave_alloc(struct scsi_device *sdev)
 }
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 static int scst_local_slave_configure(struct scsi_device *sdev)
+#else
+static int scst_local_sdev_configure(struct scsi_device *sdev, struct queue_limits *lim)
+#endif
 {
 	int mqd;
 
@@ -1365,12 +1380,18 @@ static const struct scsi_host_template scst_lcl_ini_driver_template = {
 	.name				= SCST_LOCAL_NAME,
 	.queuecommand			= scst_local_queuecommand,
 	.change_queue_depth		= scst_local_change_queue_depth,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 6))
 	.slave_alloc			= scst_local_slave_alloc,
 #else
 	.dma_alignment			= (4096 - 1),
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 	.slave_configure		= scst_local_slave_configure,
+#else
+	.sdev_configure			= scst_local_sdev_configure,
+#endif
 	.eh_abort_handler		= scst_local_abort,
 	.eh_device_reset_handler	= scst_local_device_reset,
 	.eh_target_reset_handler	= scst_local_target_reset,
@@ -1382,7 +1403,7 @@ static const struct scsi_host_template scst_lcl_ini_driver_template = {
 	/*
 	 * Set it low for the "Drop back to untagged" case in
 	 * scsi_track_queue_full(). We are adjusting it to a better
-	 * default in slave_configure()
+	 * default in sdev_configure()
 	 */
 	.cmd_per_lun			= 3,
 	.this_id			= -1,
