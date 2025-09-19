@@ -695,7 +695,7 @@ static struct scst_vdisk_dev *vdev_find(const char *name)
 		}
 	}
 
-	TRACE_EXIT_HRES((unsigned long)res);
+	TRACE_EXIT_HRES(res);
 	return res;
 }
 
@@ -968,7 +968,9 @@ static int vdisk_init_block_integrity(struct scst_vdisk_dev *virt_dev)
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 	bi_profile_name = bi->name;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 6))
 	bi_profile_name = bi->profile->name;
 #else
 	bi_profile_name = blk_integrity_profile_name(bi);
@@ -3285,9 +3287,9 @@ static bool vdisk_no_fd_allowed_commands(const struct scst_cmd *cmd)
 	case READ_CAPACITY:
 	case REPORT_LUNS:
 	case REQUEST_SENSE:
-	case RELEASE:
+	case RELEASE_6:
 	case RELEASE_10:
-	case RESERVE:
+	case RESERVE_6:
 	case RESERVE_10:
 	case READ_BUFFER:
 	case WRITE_BUFFER:
@@ -6376,82 +6378,84 @@ out_done:
 static void vdisk_report_registering(const struct scst_vdisk_dev *virt_dev)
 {
 	enum { buf_size = 256 };
-	char *buf = kmalloc(buf_size, GFP_KERNEL);
-	int i, j;
+	char *buf;
+	int ret, pos;
 
+	buf = kmalloc(buf_size, GFP_KERNEL);
 	if (!buf) {
 		PRINT_ERROR("%s: out of memory", __func__);
 		return;
 	}
 
-	i = snprintf(buf, buf_size, "Registering virtual %s device %s ",
-		     virt_dev->vdev_devt->name, virt_dev->name);
-	j = i;
+	ret = scnprintf(buf, buf_size, "Registering virtual %s device %s ",
+			virt_dev->vdev_devt->name, virt_dev->name);
+	pos = ret;
 
 	if (virt_dev->wt_flag)
-		i += snprintf(&buf[i], buf_size - i, "(WRITE_THROUGH");
+		ret += scnprintf(buf + ret, buf_size - ret, "(WRITE_THROUGH");
 
 	if (virt_dev->nv_cache)
-		i += snprintf(&buf[i], buf_size - i, "%sNV_CACHE",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sNV_CACHE",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->rd_only)
-		i += snprintf(&buf[i], buf_size - i, "%sREAD_ONLY",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sREAD_ONLY",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->o_direct_flag)
-		i += snprintf(&buf[i], buf_size - i, "%sO_DIRECT",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sO_DIRECT",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->nullio)
-		i += snprintf(&buf[i], buf_size - i, "%sNULLIO",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sNULLIO",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->blockio)
-		i += snprintf(&buf[i], buf_size - i, "%sBLOCKIO",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sBLOCKIO",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->removable)
-		i += snprintf(&buf[i], buf_size - i, "%sREMOVABLE",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sREMOVABLE",
+				 ret == pos ? "(" : ", ");
 
 	if (!virt_dev->dev_active)
-		i += snprintf(&buf[i], buf_size - i, "%sINACTIVE",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sINACTIVE",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->tst != DEF_TST)
-		i += snprintf(&buf[i], buf_size - i, "%sTST %d",
-			(j == i) ? "(" : ", ", virt_dev->tst);
+		ret += scnprintf(buf + ret, buf_size - ret, "%sTST %d",
+				 ret == pos ? "(" : ", ", virt_dev->tst);
 
 	if (virt_dev->rotational)
-		i += snprintf(&buf[i], buf_size - i, "%sROTATIONAL",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sROTATIONAL",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->thin_provisioned)
-		i += snprintf(&buf[i], buf_size - i, "%sTHIN_PROVISIONED",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sTHIN_PROVISIONED",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->dif_mode != SCST_DIF_MODE_NONE) {
-		i += snprintf(&buf[i], buf_size - i, "%sDIF MODE %x, DIF TYPE %d",
-			      (j == i) ? "(" : ", ",
-			      virt_dev->dif_mode, virt_dev->dif_type);
+		ret += scnprintf(buf + ret, buf_size - ret, "%sDIF MODE %x, DIF TYPE %d",
+				 ret == pos ? "(" : ", ",
+				 virt_dev->dif_mode, virt_dev->dif_type);
+
 		if (virt_dev->dif_filename)
-			i += snprintf(&buf[i], buf_size - i, ", DIF FILENAME %s",
-				virt_dev->dif_filename);
+			ret += scnprintf(buf + ret, buf_size - ret, ", DIF FILENAME %s",
+					 virt_dev->dif_filename);
 		else if (virt_dev->dif_static_app_tag_combined != SCST_DIF_NO_CHECK_APP_TAG)
-			i += snprintf(&buf[i], buf_size - i, ", DIF STATIC APP TAG %llx",
-				(long long)be64_to_cpu(virt_dev->dif_static_app_tag_combined));
+			ret += scnprintf(buf + ret, buf_size - ret, ", DIF STATIC APP TAG %llx",
+					 (long long)be64_to_cpu(virt_dev->dif_static_app_tag_combined));
 	}
 
 	if (virt_dev->async)
-		i += snprintf(&buf[i], buf_size - i, "%sASYNC",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sASYNC",
+				 ret == pos ? "(" : ", ");
 
 	if (virt_dev->dummy)
-		i += snprintf(&buf[i], buf_size - i, "%sDUMMY",
-			(j == i) ? "(" : ", ");
+		ret += scnprintf(buf + ret, buf_size - ret, "%sDUMMY",
+				 ret == pos ? "(" : ", ");
 
-	PRINT_INFO("%s%s", buf, j == i ? "" : ")");
+	PRINT_INFO("%s%s", buf, ret == pos ? "" : ")");
 
 	kfree(buf);
 }
@@ -6502,6 +6506,20 @@ out:
 	return res;
 }
 
+static void vdisk_free_bioset(struct scst_vdisk_dev *virt_dev)
+{
+	if (!virt_dev->vdisk_bioset)
+		return;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
+	bioset_exit(virt_dev->vdisk_bioset);
+#else
+	bioset_free(virt_dev->vdisk_bioset);
+#endif
+
+	virt_dev->vdisk_bioset = NULL;
+}
+
 static int vdisk_create_bioset(struct scst_vdisk_dev *virt_dev)
 {
 	int res = 0;
@@ -6511,8 +6529,7 @@ static int vdisk_create_bioset(struct scst_vdisk_dev *virt_dev)
 	/* Pool size doesn't really matter */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
 	virt_dev->vdisk_bioset = &virt_dev->vdisk_bioset_struct;
-	res = bioset_init(&virt_dev->vdisk_bioset_struct, 2, 0,
-			  BIOSET_NEED_BVECS);
+	res = bioset_init(&virt_dev->vdisk_bioset_struct, 2, 0, BIOSET_NEED_BVECS);
 #else
 	virt_dev->vdisk_bioset = bioset_create(2, 0, BIOSET_NEED_BVECS);
 	if (!virt_dev->vdisk_bioset)
@@ -6520,43 +6537,26 @@ static int vdisk_create_bioset(struct scst_vdisk_dev *virt_dev)
 #endif
 	if (res < 0) {
 		PRINT_ERROR("Failed to create bioset (dev %s)", virt_dev->name);
-		goto out;
+		return res;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0)
+	/*
+	 * See also commit 105ca2a2c2ff ("block: split struct bio_integrity_payload") #v6.15.
+	 */
 	if (virt_dev->dif_mode & SCST_DIF_MODE_DEV) {
 		/* The same, pool size doesn't really matter */
 		res = bioset_integrity_create(virt_dev->vdisk_bioset, 2);
-		if (res != 0) {
+		if (res) {
 			PRINT_ERROR("Failed to create integrity bioset (dev %s)",
 				    virt_dev->name);
-			goto out_free;
+			vdisk_free_bioset(virt_dev);
+			return res;
 		}
 	}
-
-	res = 0;
-
-out:
-	return res;
-
-out_free:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
-	bioset_exit(virt_dev->vdisk_bioset);
-#else
-	bioset_free(virt_dev->vdisk_bioset);
 #endif
-	virt_dev->vdisk_bioset = NULL;
-	goto out;
-}
 
-static void vdisk_free_bioset(struct scst_vdisk_dev *virt_dev)
-{
-	if (!virt_dev->vdisk_bioset)
-		return;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
-	bioset_exit(virt_dev->vdisk_bioset);
-#else
-	bioset_free(virt_dev->vdisk_bioset);
-#endif
+	return 0;
 }
 
 static void vdev_inq_changed_fn(struct work_struct *work)
@@ -7724,6 +7724,7 @@ static ssize_t vdev_size_show(struct kobject *kobj, struct kobj_attribute *attr,
 	struct scst_vdisk_dev *virt_dev;
 	unsigned long long size;
 	bool key;
+	ssize_t ret;
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
@@ -7736,8 +7737,12 @@ static ssize_t vdev_size_show(struct kobject *kobj, struct kobj_attribute *attr,
 	 */
 	key = !(virt_dev->nullio && size == VDISK_NULLIO_SIZE) && !size_shift;
 
-	return sprintf(buf, "%llu\n%s", size >> size_shift,
-		       key ? SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%llu\n", size >> size_shift);
+
+	if (key)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static ssize_t vdev_sysfs_size_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -7759,19 +7764,20 @@ static ssize_t vdev_sysfs_size_mb_show(struct kobject *kobj, struct kobj_attribu
 static ssize_t vdisk_sysfs_blocksize_show(struct kobject *kobj, struct kobj_attribute *attr,
 					  char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 
-	pos = sprintf(buf, "%d\n%s", dev->block_size,
-		      dev->block_size == (1 << DEF_DISK_BLOCK_SHIFT) ? "" :
-		      SCST_SYSFS_KEY_MARK "\n");
+	ret = sysfs_emit(buf, "%d\n", dev->block_size);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	if (dev->block_size != (1 << DEF_DISK_BLOCK_SHIFT))
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdisk_opt_trans_len_store(struct kobject *kobj,
@@ -7805,69 +7811,77 @@ static ssize_t vdisk_opt_trans_len_store(struct kobject *kobj,
 static ssize_t vdisk_opt_trans_len_show(struct kobject *kobj,
 					struct kobj_attribute *attr, char *buf)
 {
-	struct scst_device *dev =
-		container_of(kobj, struct scst_device, dev_kobj);
+	struct scst_device *dev = container_of(kobj, struct scst_device, dev_kobj);
 	struct scst_vdisk_dev *virt_dev = dev->dh_priv;
+	ssize_t ret;
 
-	return sprintf(buf, "%d\n%s", virt_dev->opt_trans_len,
-		       virt_dev->opt_trans_len_set ? SCST_SYSFS_KEY_MARK "\n" :
-		       "");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->opt_trans_len);
+
+	if (virt_dev->opt_trans_len_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static ssize_t vdisk_sysfs_rd_only_show(struct kobject *kobj, struct kobj_attribute *attr,
 					char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%d\n%s", virt_dev->rd_only,
-		      virt_dev->rd_only == DEF_RD_ONLY ? "" : SCST_SYSFS_KEY_MARK "\n");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->rd_only);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	if (virt_dev->rd_only != DEF_RD_ONLY)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdisk_sysfs_wt_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%d\n%s", virt_dev->wt_flag,
-		      virt_dev->wt_flag == DEF_WRITE_THROUGH ? "" : SCST_SYSFS_KEY_MARK "\n");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->wt_flag);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	if (virt_dev->wt_flag != DEF_WRITE_THROUGH)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdisk_sysfs_tp_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%d\n%s", virt_dev->thin_provisioned,
-		      virt_dev->thin_provisioned_manually_set ?
-		      SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->thin_provisioned);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	if (virt_dev->thin_provisioned_manually_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdisk_sysfs_gen_tp_soft_threshold_reached_UA(struct kobject *kobj,
@@ -7899,12 +7913,15 @@ static ssize_t vdisk_sysfs_expl_alua_show(struct kobject *kobj,
 					  struct kobj_attribute *attr,
 					  char *buf)
 {
-	struct scst_device *dev = container_of(kobj, struct scst_device,
-					       dev_kobj);
+	struct scst_device *dev = container_of(kobj, struct scst_device, dev_kobj);
+	ssize_t ret;
 
-	return sprintf(buf, "%d\n%s", dev->expl_alua,
-		      dev->expl_alua != DEF_EXPL_ALUA ?
-		      SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%d\n", dev->expl_alua);
+
+	if (dev->expl_alua != DEF_EXPL_ALUA)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static ssize_t vdisk_sysfs_expl_alua_store(struct kobject *kobj,
@@ -7930,62 +7947,74 @@ static ssize_t vdisk_sysfs_expl_alua_store(struct kobject *kobj,
 static ssize_t vdisk_sysfs_nv_cache_show(struct kobject *kobj, struct kobj_attribute *attr,
 					 char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%d\n%s", virt_dev->nv_cache,
-		      virt_dev->nv_cache == DEF_NV_CACHE ? "" : SCST_SYSFS_KEY_MARK "\n");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->nv_cache);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	if (virt_dev->nv_cache != DEF_NV_CACHE)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdisk_sysfs_o_direct_show(struct kobject *kobj, struct kobj_attribute *attr,
 					 char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%d\n%s", virt_dev->o_direct_flag,
-		      virt_dev->o_direct_flag == DEF_O_DIRECT ? "" : SCST_SYSFS_KEY_MARK "\n");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->o_direct_flag);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	if (virt_dev->o_direct_flag != DEF_O_DIRECT)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_dummy_show(struct kobject *kobj,
 				     struct kobj_attribute *attr, char *buf)
 {
-	struct scst_device *dev = container_of(kobj, struct scst_device,
-					       dev_kobj);
+	struct scst_device *dev = container_of(kobj, struct scst_device, dev_kobj);
 	struct scst_vdisk_dev *virt_dev = dev->dh_priv;
+	ssize_t ret;
 
-	return sprintf(buf, "%d\n%s", virt_dev->dummy,
-		 virt_dev->dummy != DEF_DUMMY ? SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->dummy);
+
+	if (virt_dev->dummy != DEF_DUMMY)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static ssize_t vdev_sysfs_rz_show(struct kobject *kobj,
 				  struct kobj_attribute *attr, char *buf)
 {
-	struct scst_device *dev = container_of(kobj, struct scst_device,
-					       dev_kobj);
+	struct scst_device *dev = container_of(kobj, struct scst_device, dev_kobj);
 	struct scst_vdisk_dev *virt_dev = dev->dh_priv;
 	bool read_zero = virt_dev->read_zero;
+	ssize_t ret;
 
-	return sprintf(buf, "%d\n%s", read_zero, read_zero != DEF_READ_ZERO ?
-		       SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%d\n", read_zero);
+
+	if (read_zero != DEF_READ_ZERO)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static ssize_t vdev_sysfs_rz_store(struct kobject *kobj,
@@ -8020,63 +8049,63 @@ out:
 static ssize_t vdisk_sysfs_removable_show(struct kobject *kobj, struct kobj_attribute *attr,
 					  char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%d\n", virt_dev->removable);
+	ret = sysfs_emit(buf, "%d\n", virt_dev->removable);
 
 	if (virt_dev->dev->type != TYPE_ROM && virt_dev->removable != DEF_REMOVABLE)
-		pos += sprintf(&buf[pos], "%s\n", SCST_SYSFS_KEY_MARK);
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdisk_sysfs_tst_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%d\n", virt_dev->tst);
+	ret = sysfs_emit(buf, "%d\n", virt_dev->tst);
 
 	if (virt_dev->tst != DEF_TST)
-		pos += sprintf(&buf[pos], "%s\n", SCST_SYSFS_KEY_MARK);
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdisk_sysfs_rotational_show(struct kobject *kobj, struct kobj_attribute *attr,
 					   char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%d\n", virt_dev->rotational);
+	ret = sysfs_emit(buf, "%d\n", virt_dev->rotational);
 
 	if (virt_dev->rotational != DEF_ROTATIONAL)
-		pos += sprintf(&buf[pos], "%s\n", SCST_SYSFS_KEY_MARK);
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static int vdev_sysfs_process_get_filename(struct scst_sysfs_work_item *work)
@@ -8145,9 +8174,9 @@ out_put:
 static ssize_t vdev_sysfs_filename_show(struct kobject *kobj, struct kobj_attribute *attr,
 					char *buf)
 {
-	int res = 0;
 	struct scst_device *dev;
 	struct scst_sysfs_work_item *work;
+	ssize_t res = 0;
 
 	TRACE_ENTRY();
 
@@ -8168,7 +8197,7 @@ static ssize_t vdev_sysfs_filename_show(struct kobject *kobj, struct kobj_attrib
 	if (res != 0)
 		goto out_put;
 
-	res = snprintf(buf, SCST_SYSFS_BLOCK_SIZE, "%s\n", work->res_buf);
+	res = sysfs_emit(buf, "%s\n", work->res_buf);
 
 out_put:
 	scst_sysfs_work_put(work);
@@ -8283,10 +8312,14 @@ static ssize_t vdev_sysfs_cluster_mode_show(struct kobject *kobj, struct kobj_at
 					    char *buf)
 {
 	struct scst_device *dev = container_of(kobj, struct scst_device, dev_kobj);
+	ssize_t ret;
 
-	return sprintf(buf, "%d\n%s", dev->cluster_mode,
-		       dev->cluster_mode ?
-		       SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%d\n", dev->cluster_mode);
+
+	if (dev->cluster_mode)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static int vdev_sysfs_process_cluster_mode_store(struct scst_sysfs_work_item *work)
@@ -8460,9 +8493,9 @@ static ssize_t vdev_sysfs_t10_vend_id_show(struct kobject *kobj,
 					   struct kobj_attribute *attr,
 					   char *buf)
 {
-	int pos;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
@@ -8470,13 +8503,16 @@ static ssize_t vdev_sysfs_t10_vend_id_show(struct kobject *kobj,
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
-	pos = sprintf(buf, "%s\n%s", virt_dev->t10_vend_id,
-		      virt_dev->t10_vend_id_set ? SCST_SYSFS_KEY_MARK "\n" :
-		      "");
+
+	ret = sysfs_emit(buf, "%s\n", virt_dev->t10_vend_id);
+
+	if (virt_dev->t10_vend_id_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_vend_specific_id_store(struct kobject *kobj,
@@ -8520,9 +8556,9 @@ static ssize_t vdev_sysfs_vend_specific_id_show(struct kobject *kobj,
 						struct kobj_attribute *attr,
 						char *buf)
 {
-	int pos;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
@@ -8530,13 +8566,16 @@ static ssize_t vdev_sysfs_vend_specific_id_show(struct kobject *kobj,
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
-	pos = sprintf(buf, "%s\n%s", virt_dev->vend_specific_id,
-		      virt_dev->vend_specific_id_set ?
-		      SCST_SYSFS_KEY_MARK "\n" : "");
+
+	ret = sysfs_emit(buf, "%s\n", virt_dev->vend_specific_id);
+
+	if (virt_dev->vend_specific_id_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_prod_id_store(struct kobject *kobj,
@@ -8580,9 +8619,9 @@ static ssize_t vdev_sysfs_prod_id_show(struct kobject *kobj,
 				       struct kobj_attribute *attr,
 				       char *buf)
 {
-	int pos;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
@@ -8590,12 +8629,16 @@ static ssize_t vdev_sysfs_prod_id_show(struct kobject *kobj,
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
-	pos = sprintf(buf, "%s\n%s", virt_dev->prod_id,
-		      virt_dev->prod_id_set ? SCST_SYSFS_KEY_MARK "\n" : "");
+
+	ret = sysfs_emit(buf, "%s\n", virt_dev->prod_id);
+
+	if (virt_dev->prod_id_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_prod_rev_lvl_store(struct kobject *kobj,
@@ -8639,9 +8682,9 @@ static ssize_t vdev_sysfs_prod_rev_lvl_show(struct kobject *kobj,
 					    struct kobj_attribute *attr,
 					    char *buf)
 {
-	int pos;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
@@ -8649,13 +8692,16 @@ static ssize_t vdev_sysfs_prod_rev_lvl_show(struct kobject *kobj,
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
-	pos = sprintf(buf, "%s\n%s", virt_dev->prod_rev_lvl,
-		      virt_dev->prod_rev_lvl_set ? SCST_SYSFS_KEY_MARK "\n" :
-		      "");
+
+	ret = sysfs_emit(buf, "%s\n", virt_dev->prod_rev_lvl);
+
+	if (virt_dev->prod_rev_lvl_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_scsi_device_name_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -8700,9 +8746,9 @@ out:
 static ssize_t vdev_sysfs_scsi_device_name_show(struct kobject *kobj, struct kobj_attribute *attr,
 						char *buf)
 {
-	int pos;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
@@ -8710,12 +8756,16 @@ static ssize_t vdev_sysfs_scsi_device_name_show(struct kobject *kobj, struct kob
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
-	pos = sprintf(buf, "%s\n%s", virt_dev->scsi_device_name,
-		      virt_dev->scsi_device_name_set ? SCST_SYSFS_KEY_MARK "\n" : "");
+
+	ret = sysfs_emit(buf, "%s\n", virt_dev->scsi_device_name);
+
+	if (virt_dev->scsi_device_name_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_t10_dev_id_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -8758,9 +8808,9 @@ out:
 static ssize_t vdev_sysfs_t10_dev_id_show(struct kobject *kobj, struct kobj_attribute *attr,
 					  char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
@@ -8768,12 +8818,16 @@ static ssize_t vdev_sysfs_t10_dev_id_show(struct kobject *kobj, struct kobj_attr
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
-	pos = sprintf(buf, "%s\n%s", virt_dev->t10_dev_id,
-		      virt_dev->t10_dev_id_set ? SCST_SYSFS_KEY_MARK "\n" : "");
+
+	ret = sysfs_emit(buf, "%s\n", virt_dev->t10_dev_id);
+
+	if (virt_dev->t10_dev_id_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_eui64_id_store(struct kobject *kobj,
@@ -8826,23 +8880,29 @@ out:
 static ssize_t vdev_sysfs_eui64_id_show(struct kobject *kobj,
 					struct kobj_attribute *attr, char *buf)
 {
-	int i, pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	int i;
+	ssize_t ret = 0;
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
 	if (virt_dev->eui64_id_len)
-		pos += sprintf(buf + pos, "0x");
+		ret += sysfs_emit_at(buf, ret, "0x");
+
 	for (i = 0; i < virt_dev->eui64_id_len; i++)
-		pos += sprintf(buf + pos, "%02x", virt_dev->eui64_id[i]);
-	pos += sprintf(buf + pos, "\n%s", virt_dev->eui64_id_len ?
-		       SCST_SYSFS_KEY_MARK "\n" : "");
+		ret += sysfs_emit_at(buf, ret, "%02x", virt_dev->eui64_id[i]);
+
+	ret += sysfs_emit_at(buf, ret, "\n");
+
+	if (virt_dev->eui64_id_len)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	return pos;
+	return ret;
 }
 
 static ssize_t vdev_sysfs_naa_id_store(struct kobject *kobj,
@@ -8901,23 +8961,29 @@ out:
 
 static ssize_t vdev_sysfs_naa_id_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	int i, pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	int i;
+	ssize_t ret = 0;
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
 	if (virt_dev->naa_id_len)
-		pos += sprintf(buf + pos, "0x");
+		ret += sysfs_emit_at(buf, ret, "0x");
+
 	for (i = 0; i < virt_dev->naa_id_len; i++)
-		pos += sprintf(buf + pos, "%02x", virt_dev->naa_id[i]);
-	pos += sprintf(buf + pos, "\n%s", virt_dev->naa_id_len ?
-		       SCST_SYSFS_KEY_MARK "\n" : "");
+		ret += sysfs_emit_at(buf, ret, "%02x", virt_dev->naa_id[i]);
+
+	ret += sysfs_emit_at(buf, ret, "\n");
+
+	if (virt_dev->naa_id_len)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	return pos;
+	return ret;
 }
 
 static ssize_t vdev_sysfs_usn_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -8972,9 +9038,9 @@ out_unlock:
 
 static ssize_t vdev_sysfs_usn_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
@@ -8982,12 +9048,16 @@ static ssize_t vdev_sysfs_usn_show(struct kobject *kobj, struct kobj_attribute *
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
-	pos = sprintf(buf, "%s\n%s", virt_dev->usn,
-		      virt_dev->usn_set ? SCST_SYSFS_KEY_MARK "\n" : "");
+
+	ret = sysfs_emit(buf, "%s\n", virt_dev->usn);
+
+	if (virt_dev->usn_set)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_inq_vend_specific_store(struct kobject *kobj,
@@ -9023,41 +9093,42 @@ static ssize_t vdev_sysfs_inq_vend_specific_show(struct kobject *kobj,
 						 struct kobj_attribute *attr,
 						 char *buf)
 {
-	int pos;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
 	read_lock(&vdisk_serial_rwlock);
-	pos = snprintf(buf, PAGE_SIZE, "%.*s\n%s",
-		       virt_dev->inq_vend_specific_len,
-		       virt_dev->inq_vend_specific,
-		       virt_dev->inq_vend_specific_len ?
-		       SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%.*s\n",
+			 virt_dev->inq_vend_specific_len, virt_dev->inq_vend_specific);
+
+	if (virt_dev->inq_vend_specific_len)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
 	read_unlock(&vdisk_serial_rwlock);
 
-	return pos;
+	return ret;
 }
 
 static ssize_t vdev_sysfs_active_show(struct kobject *kobj,
 				      struct kobj_attribute *attr,
 				      char *buf)
 {
-	int pos;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = snprintf(buf, PAGE_SIZE, "%d\n%s",
-		       virt_dev->dev_active,
-		       virt_dev->dev_active != DEF_DEV_ACTIVE ?
-			       SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->dev_active);
 
-	return pos;
+	if (virt_dev->dev_active != DEF_DEV_ACTIVE)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static int vdev_sysfs_process_active_store(struct scst_sysfs_work_item *work)
@@ -9162,22 +9233,25 @@ static ssize_t vdev_sysfs_bind_alua_state_show(struct kobject *kobj,
 {
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
-	int pos;
 	unsigned int bind_alua_state;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
+
 	spin_lock(&virt_dev->flags_lock);
 	bind_alua_state = virt_dev->bind_alua_state;
 	spin_unlock(&virt_dev->flags_lock);
-	pos = sprintf(buf, "%d\n%s", bind_alua_state,
-		      bind_alua_state != DEF_BIND_ALUA_STATE ?
-		      SCST_SYSFS_KEY_MARK "\n" : "");
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	ret = sysfs_emit(buf, "%d\n", bind_alua_state);
+
+	if (bind_alua_state != DEF_BIND_ALUA_STATE)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_sysfs_bind_alua_state_store(struct kobject *kobj,
@@ -9235,30 +9309,36 @@ static ssize_t vdev_async_store(struct kobject *kobj, struct kobj_attribute *att
 static ssize_t vdev_async_show(struct kobject *kobj,
 			       struct kobj_attribute *attr, char *buf)
 {
-	struct scst_device *dev =
-		container_of(kobj, struct scst_device, dev_kobj);
+	struct scst_device *dev = container_of(kobj, struct scst_device, dev_kobj);
 	struct scst_vdisk_dev *virt_dev = dev->dh_priv;
+	ssize_t ret;
 
-	return sprintf(buf, "%d\n%s", virt_dev->async,
-		      virt_dev->async ? SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->async);
+
+	if (virt_dev->async)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static ssize_t vdev_dif_filename_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	int pos = 0;
 	struct scst_device *dev;
 	struct scst_vdisk_dev *virt_dev;
+	ssize_t ret;
 
 	TRACE_ENTRY();
 
 	dev = container_of(kobj, struct scst_device, dev_kobj);
 	virt_dev = dev->dh_priv;
 
-	pos = sprintf(buf, "%s\n%s", virt_dev->dif_filename,
-		      virt_dev->dif_filename ? SCST_SYSFS_KEY_MARK "\n" : "");
+	ret = sysfs_emit(buf, "%s\n", virt_dev->dif_filename);
 
-	TRACE_EXIT_RES(pos);
-	return pos;
+	if (virt_dev->dif_filename)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	TRACE_EXIT_RES(ret);
+	return ret;
 }
 
 static ssize_t vdev_lb_per_pb_exp_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -9286,13 +9366,16 @@ static ssize_t vdev_lb_per_pb_exp_store(struct kobject *kobj, struct kobj_attrib
 static ssize_t vdev_lb_per_pb_exp_show(struct kobject *kobj, struct kobj_attribute *attr,
 				       char *buf)
 {
-	struct scst_device *dev =
-		container_of(kobj, struct scst_device, dev_kobj);
+	struct scst_device *dev = container_of(kobj, struct scst_device, dev_kobj);
 	struct scst_vdisk_dev *virt_dev = dev->dh_priv;
+	ssize_t ret;
 
-	return sprintf(buf, "%d\n%s", virt_dev->lb_per_pb_exp,
-		       virt_dev->lb_per_pb_exp == DEF_LB_PER_PB_EXP ? "" :
-		       SCST_SYSFS_KEY_MARK "\n");
+	ret = sysfs_emit(buf, "%d\n", virt_dev->lb_per_pb_exp);
+
+	if (virt_dev->lb_per_pb_exp != DEF_LB_PER_PB_EXP)
+		ret += sysfs_emit_at(buf, ret, "%s\n", SCST_SYSFS_KEY_MARK);
+
+	return ret;
 }
 
 static struct kobj_attribute vdev_active_attr =
@@ -9784,9 +9867,9 @@ static int __init vdev_check_mode_pages_path(void)
 	[ALLOW_MEDIUM_REMOVAL] = vdisk_exec_prevent_allow_medium_removal, \
 	[READ_TOC] = vdisk_exec_read_toc,				\
 	[START_STOP] = vdisk_exec_start_stop,				\
-	[RESERVE] = vdisk_nop,						\
+	[RESERVE_6] = vdisk_nop,					\
 	[RESERVE_10] = vdisk_nop,					\
-	[RELEASE] = vdisk_nop,						\
+	[RELEASE_6] = vdisk_nop,					\
 	[RELEASE_10] = vdisk_nop,					\
 	[TEST_UNIT_READY] = vdisk_nop,					\
 	[INQUIRY] = vdisk_exec_inquiry,					\

@@ -94,7 +94,7 @@ static struct edif_list_entry *qla_edif_list_find_sa_index(fc_port_t *fcport,
 /* timeout called when no traffic and delayed rx sa_index delete */
 static void qla2x00_sa_replace_iocb_timeout(struct timer_list *t)
 {
-	struct edif_list_entry *edif_entry = from_timer(edif_entry, t, timer);
+	struct edif_list_entry *edif_entry = timer_container_of(edif_entry, t, timer);
 	fc_port_t *fcport = edif_entry->fcport;
 	struct scsi_qla_host *vha = fcport->vha;
 	struct  edif_sa_ctl *sa_ctl;
@@ -416,7 +416,7 @@ static void __qla2x00_release_all_sadb(struct scsi_qla_host *vha,
 				 */
 				if (edif_entry->delete_sa_index !=
 						INVALID_EDIF_SA_INDEX) {
-					del_timer(&edif_entry->timer);
+					timer_delete(&edif_entry->timer);
 
 					/* build and send the aen */
 					fcport->edif.rx_sa_set = 1;
@@ -2844,7 +2844,7 @@ qla28xx_sa_update_iocb_entry(scsi_qla_host_t *v, struct req_que *req,
 			    "%s: removing edif_entry %p, new sa_index: 0x%x\n",
 			    __func__, edif_entry, pkt->sa_index);
 			qla_edif_list_delete_sa_index(sp->fcport, edif_entry);
-			del_timer(&edif_entry->timer);
+			timer_delete(&edif_entry->timer);
 
 			ql_dbg(ql_dbg_edif, vha, 0x5033,
 			    "%s: releasing edif_entry %p, new sa_index: 0x%x\n",

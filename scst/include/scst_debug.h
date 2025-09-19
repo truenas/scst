@@ -106,7 +106,7 @@
 #define TRACE_ALL            0xffffffff
 /* Flags 0xXXXXXXXXXX000000 are local for users */
 
-#define TRACE_MINOR_AND_MGMT_DBG	(TRACE_MINOR|TRACE_MGMT_DEBUG)
+#define TRACE_MINOR_AND_MGMT_DBG	(TRACE_MINOR | TRACE_MGMT_DEBUG)
 
 /*
  * Note: in the next two printk() statements the KERN_CONT macro is only
@@ -132,20 +132,19 @@
 #endif
 
 int __printf(6, 7)
-debug_print_with_prefix(unsigned long trace_flag,
-	const char *severity, const char *prefix, const char *func, int line,
-	const char *fmt, ...);
+debug_print_with_prefix(unsigned long trace_flag, const char *severity, const char *prefix,
+			const char *func, int line, const char *fmt, ...);
 void debug_print_buffer(const void *data, int len);
 const char *debug_transport_id_to_initiator_name(const uint8_t *transport_id);
 
 #define TRACING_MINOR() (trace_flag & TRACE_MINOR)
 
-#define TRACE(trace, format, args...)					\
-do {									\
-	if (___unlikely(trace_flag & (trace))) {			\
-		debug_print_with_prefix(trace_flag, KERN_INFO,		\
-			__LOG_PREFIX, __func__, __LINE__, format, ## args); \
-	}								\
+#define TRACE(trace, format, args...)						\
+do {										\
+	if (___unlikely(trace_flag & (trace))) {				\
+		debug_print_with_prefix(trace_flag, KERN_INFO,			\
+			__LOG_PREFIX, __func__, __LINE__, format, ## args);	\
+	}									\
 } while (0)
 
 #define TRACE_PR(format, args...) TRACE(TRACE_PRES, format, ## args)
@@ -275,11 +274,11 @@ do {									\
 #define TRACE_DBG(format, args...) \
 		TRACE_DBG_FLAG(TRACE_DEBUG, format, ## args)
 #define TRACE_DBG_SPECIAL(format, args...) \
-		TRACE_DBG_FLAG(TRACE_DEBUG|TRACE_SPECIAL, format, ## args)
+		TRACE_DBG_FLAG(TRACE_DEBUG | TRACE_SPECIAL, format, ## args)
 #define TRACE_MGMT_DBG(format, args...) \
 		TRACE_DBG_FLAG(TRACE_MGMT_DEBUG, format, ## args)
 #define TRACE_MGMT_DBG_SPECIAL(args...)	\
-		TRACE_DBG_FLAG(TRACE_MGMT_DEBUG|TRACE_SPECIAL, format, ## args)
+		TRACE_DBG_FLAG(TRACE_MGMT_DEBUG | TRACE_SPECIAL, format, ## args)
 #define TRACE_BLOCK(format, args...) \
 		TRACE_DBG_FLAG(TRACE_BLOCKING, format, ## args)
 
@@ -305,56 +304,52 @@ do {									\
 #define TRACE_ENTRY()							\
 do {									\
 	if (trace_flag & TRACE_ENTRYEXIT) {				\
-		if (trace_flag & TRACE_PID) {				\
-			PRINT(KERN_INFO, "[%d]: ENTRY %s", current->pid, \
-				__func__);				\
-		}							\
-		else {							\
-			PRINT(KERN_INFO, "ENTRY %s", __func__);	\
-		}							\
+		if (trace_flag & TRACE_PID)				\
+			PRINT(KERN_INFO, "[%d]: ENTRY %s",		\
+			      current->pid, __func__);			\
+		else							\
+			PRINT(KERN_INFO, "ENTRY %s",			\
+			      __func__);				\
 	}								\
 } while (0)
 
 #define TRACE_EXIT()							\
 do {									\
 	if (trace_flag & TRACE_ENTRYEXIT) {				\
-		if (trace_flag & TRACE_PID) {				\
-			PRINT(KERN_INFO, "[%d]: EXIT %s", current->pid,	\
-				__func__);				\
-		}							\
-		else {							\
-			PRINT(KERN_INFO, "EXIT %s", __func__);		\
-		}							\
+		if (trace_flag & TRACE_PID)				\
+			PRINT(KERN_INFO, "[%d]: EXIT %s",		\
+			      current->pid, __func__);			\
+		else							\
+			PRINT(KERN_INFO, "EXIT %s",			\
+			      __func__);				\
 	}								\
 } while (0)
 
 #define TRACE_EXIT_RES(res)						\
 do {									\
-	unsigned long lres = res;					\
-									\
 	if (trace_flag & TRACE_ENTRYEXIT) {				\
-		if (trace_flag & TRACE_PID) {				\
-			PRINT(KERN_INFO, "[%d]: EXIT %s: %ld", current->pid, \
-			      __func__, lres);				\
-		} else {						\
+		long lres = res;					\
+									\
+		if (trace_flag & TRACE_PID)				\
+			PRINT(KERN_INFO, "[%d]: EXIT %s: %ld",		\
+			      current->pid, __func__, lres);		\
+		else							\
 			PRINT(KERN_INFO, "EXIT %s: %ld",		\
-				__func__, lres);			\
-		}							\
+			      __func__, lres);				\
 	}                                                               \
 } while (0)
 
 #define TRACE_EXIT_HRES(res)						\
 do {									\
-	unsigned long lres = (unsigned long)(res);			\
-									\
 	if (trace_flag & TRACE_ENTRYEXIT) {				\
-		if (trace_flag & TRACE_PID) {				\
-			PRINT(KERN_INFO, "[%d]: EXIT %s: 0x%lx", current->pid, \
-			      __func__, lres);				\
-		} else {						\
+		unsigned long lres = (unsigned long)(res);		\
+									\
+		if (trace_flag & TRACE_PID)				\
+			PRINT(KERN_INFO, "[%d]: EXIT %s: 0x%lx",	\
+			      current->pid, __func__, lres);		\
+		else							\
 			PRINT(KERN_INFO, "EXIT %s: %lx",		\
-					__func__, lres);		\
-		}							\
+			      __func__, lres);				\
 	}                                                               \
 } while (0)
 #endif
