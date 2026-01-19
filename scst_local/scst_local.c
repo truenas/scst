@@ -71,7 +71,7 @@ README file for details.
 static unsigned long scst_local_trace_flag = SCST_LOCAL_DEFAULT_LOG_FLAGS;
 #endif
 
-#define SCST_LOCAL_VERSION "3.10.0-pre"
+#define SCST_LOCAL_VERSION "3.11.0-pre"
 static const char *scst_local_version_date = "20110901";
 
 /* Some statistics */
@@ -1061,7 +1061,9 @@ static int scst_local_slave_alloc(struct scsi_device *sdev)
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 static int scst_local_slave_configure(struct scsi_device *sdev)
 #else
 static int scst_local_sdev_configure(struct scsi_device *sdev, struct queue_limits *lim)
@@ -1350,7 +1352,6 @@ static struct scst_tgt_template scst_local_targ_tmpl = {
 	.name			= "scst_local",
 	.sg_tablesize		= 0xffff,
 	.xmit_response_atomic	= 1,
-	.multithreaded_init_done = 1,
 	.enabled_attr_not_needed = 1,
 	.tgtt_attrs		= scst_local_tgtt_attrs,
 	.tgt_attrs		= scst_local_tgt_attrs,
@@ -1387,7 +1388,9 @@ static const struct scsi_host_template scst_lcl_ini_driver_template = {
 #else
 	.dma_alignment			= (4096 - 1),
 #endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 	.slave_configure		= scst_local_slave_configure,
 #else
 	.sdev_configure			= scst_local_sdev_configure,

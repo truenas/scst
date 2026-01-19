@@ -21,6 +21,7 @@
  */
 
 #include <linux/version.h>
+#include <generated/utsrelease.h>
 #ifndef RHEL_RELEASE_VERSION
 #define RHEL_RELEASE_VERSION(a, b) (((a) << 8) + (b))
 #endif
@@ -35,7 +36,9 @@
 #include <linux/dmapool.h>
 #include <linux/eventpoll.h>
 #include <linux/iocontext.h>
+#include <linux/jiffies.h>
 #include <linux/kobject_ns.h>
+#include <linux/preempt.h>
 #include <linux/scatterlist.h>	/* struct scatterlist */
 #include <linux/shrinker.h>
 #include <linux/slab.h>		/* kmalloc() */
@@ -760,6 +763,23 @@ static inline long get_user_pages_backport(unsigned long start,
 #define get_user_pages get_user_pages_backport
 #endif
 
+/* <linux/jiffies.h> */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+/*
+ * See also commit 3740dcdf8a77 ("jiffies: add time comparison functions for 64 bit jiffies")
+ * # v4.9.
+ */
+#define time_is_before_jiffies64(a) time_after64(get_jiffies_64(), a)
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+/*
+ * See also commit b35108a51cf7 ("jiffies: Define secs_to_jiffies()") # v6.13.
+ */
+#define secs_to_jiffies(_secs) (unsigned long)((_secs) * HZ)
+#endif
+
 /* <linux/kobject_ns.h> */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 16, 0) &&		\
@@ -1013,6 +1033,15 @@ static inline void *vcalloc(size_t n, size_t size)
 }
 #endif
 
+/* <linux/preempt.h> */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
+/*
+ * See also commit 15115830c887 ("preempt: Cleanup the macro maze a bit") # v5.11.
+ */
+#define in_hardirq()	(hardirq_count())
+#endif
+
 /* <linux/shrinker.h> */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0) &&		\
@@ -1041,7 +1070,9 @@ register_shrinker_backport(struct shrinker *shrinker, const char *fmt, ...)
 
 /* <linux/module.h> */
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 #define SCST_NAMESPACE		SCST
 #define SCST_QLA16_NAMESPACE	QLA16GB
 #define SCST_QLA32_NAMESPACE	QLA32GB
@@ -1719,7 +1750,12 @@ static inline int timer_delete_sync(struct timer_list *timer)
 	 LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 91)) &&		\
 	(!defined(RHEL_MAJOR) || RHEL_MAJOR -0 < 8 ||			\
 	 RHEL_MAJOR -0 == 8 && RHEL_MINOR -0 < 9 ||			\
-	 RHEL_MAJOR -0 == 9 && RHEL_MINOR -0 < 3)
+	 RHEL_MAJOR -0 == 9 && RHEL_MINOR -0 < 3) &&			\
+	(!defined(UTS_UBUNTU_RELEASE_ABI) ||				\
+	 ((LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(5, 15, 0) >> 8 ||	\
+	  UTS_UBUNTU_RELEASE_ABI -0 < 93) &&				\
+	 (LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(5, 4, 0) >> 8 ||	\
+	  UTS_UBUNTU_RELEASE_ABI -0 < 206)))
 /*
  * See also commit bb663f0f3c39 ("timers: Rename del_timer() to timer_delete()") # v6.2.
  * See also commit b086d1e82fcd # v6.1.91.

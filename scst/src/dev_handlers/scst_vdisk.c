@@ -74,7 +74,7 @@
 #define SCST_FIO_VENDOR			"SCST_FIO"
 #define SCST_BIO_VENDOR			"SCST_BIO"
 /* 4 byte ASCII Product Revision Level - left aligned */
-#define SCST_FIO_REV			"3100"
+#define SCST_FIO_REV			"3110"
 
 #define MAX_USN_LEN			(20 + 1) /* For '\0' */
 #define MAX_INQ_VEND_SPECIFIC_LEN	(INQ_BUF_SZ - 96)
@@ -6540,7 +6540,9 @@ static int vdisk_create_bioset(struct scst_vdisk_dev *virt_dev)
 		return res;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 	/*
 	 * See also commit 105ca2a2c2ff ("block: split struct bio_integrity_payload") #v6.15.
 	 */

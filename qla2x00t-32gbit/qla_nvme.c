@@ -13,7 +13,10 @@
 #include <linux/delay.h>
 #include <linux/nvme.h>
 #include <linux/nvme-fc.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 7) ||	\
+	 RHEL_RELEASE_CODE -0 == RHEL_RELEASE_VERSION(10, 0))
 #include <linux/blk-mq-pci.h>
 #endif
 #include <linux/blk-mq.h>
@@ -442,7 +445,7 @@ retry:
 	switch (rval) {
 	case QLA_SUCCESS:
 		break;
-	case EAGAIN:
+	case -EAGAIN:
 		msleep(PURLS_MSLEEP_INTERVAL);
 		cnt++;
 		if (cnt < PURLS_RETRY_COUNT)
@@ -869,7 +872,10 @@ static void qla_nvme_map_queues(struct nvme_fc_local_port *lport,
 {
 	struct scsi_qla_host *vha = lport->private;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(9, 7) ||	\
+	 RHEL_RELEASE_CODE -0 == RHEL_RELEASE_VERSION(10, 0))
 	blk_mq_pci_map_queues(map, vha->hw->pdev, vha->irq_offset);
 #else
 	blk_mq_map_hw_queues(map, &vha->hw->pdev->dev, vha->irq_offset);
@@ -1251,7 +1257,7 @@ void qla2xxx_process_purls_iocb(void **pkt, struct rsp_que **rsp)
 		a.reason = FCNVME_RJT_RC_LOGIC;
 		a.explanation = FCNVME_RJT_EXP_NONE;
 		xmt_reject = true;
-		kfree(item);
+		qla24xx_free_purex_item(item);
 		goto out;
 	}
 

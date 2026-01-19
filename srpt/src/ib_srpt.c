@@ -59,8 +59,8 @@
 
 /* Name of this kernel module. */
 #define DRV_NAME		"ib_srpt"
-#define DRV_VERSION		"3.10.0-pre" "#" __stringify(OFED_FLAVOR)
-#define DRV_RELDATE		"28 December 2024"
+#define DRV_VERSION		"3.11.0-pre" "#" __stringify(OFED_FLAVOR)
+#define DRV_RELDATE		"29 December 2025"
 #if defined(CONFIG_SCST_DEBUG) || defined(CONFIG_SCST_TRACING)
 /* Flags to be used in SCST debug tracing statements. */
 #define DEFAULT_SRPT_TRACE_FLAGS (TRACE_OUT_OF_MEM | TRACE_MINOR \
@@ -3531,7 +3531,7 @@ static int srpt_xfer_data(struct srpt_rdma_ch *ch,
 			scst_copy_sg(cmd, SCST_SG_COPY_FROM_TARGET);
 		}
 		scst_rx_data(cmd, SCST_RX_STATUS_SUCCESS,
-			     in_irq() ? SCST_CONTEXT_TASKLET :
+			     in_hardirq() ? SCST_CONTEXT_TASKLET :
 			     in_softirq() ? SCST_CONTEXT_DIRECT_ATOMIC :
 			     SCST_CONTEXT_DIRECT);
 		ret = 0;
@@ -3746,7 +3746,7 @@ static void srpt_tsk_mgmt_done(struct scst_mgmt_cmd *mcmnd)
 	pr_debug("tsk_mgmt_done for tag= %lld status=%d\n", ioctx->tsk_mgmt.tag,
 		 scst_mgmt_cmd_get_status(mcmnd));
 
-	WARN_ON(in_irq());
+	WARN_ON(in_hardirq());
 
 	srpt_set_cmd_state(ioctx, SRPT_STATE_MGMT_RSP_SENT);
 	WARN_ON(ioctx->state == SRPT_STATE_DONE);
@@ -4562,7 +4562,11 @@ static int __init srpt_init_module(void)
 		goto out;
 	}
 
-	srpt_wq = alloc_workqueue("srpt", WQ_SYSFS, 0);
+	srpt_wq = alloc_workqueue("srpt", 0
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
+				  | WQ_PERCPU
+#endif
+				  | WQ_SYSFS, 0);
 	if (!srpt_wq) {
 		pr_err("Couldn't allocate the ib_srpt workqueue\n");
 		ret = -ENOMEM;

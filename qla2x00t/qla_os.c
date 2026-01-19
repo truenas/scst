@@ -243,7 +243,9 @@ MODULE_PARM_DESC(ql2xmdenable,
 /*
  * SCSI host template entry points
  */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 static int qla2xxx_slave_configure(struct scsi_device *sdev);
 static int qla2xxx_slave_alloc(struct scsi_device *sdev);
 static void qla2xxx_slave_destroy(struct scsi_device *sdev);
@@ -283,7 +285,9 @@ struct scsi_host_template qla2xxx_driver_template = {
 	.eh_bus_reset_handler	= qla2xxx_eh_bus_reset,
 	.eh_host_reset_handler	= qla2xxx_eh_host_reset,
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 	.slave_configure	= qla2xxx_slave_configure,
 	.slave_alloc		= qla2xxx_slave_alloc,
 	.slave_destroy		= qla2xxx_slave_destroy,
@@ -464,7 +468,11 @@ static int qla25xx_setup_mode(struct scsi_qla_host *vha)
 			    "Failed to create request queue.\n");
 			goto fail;
 		}
-		ha->wq = alloc_workqueue("qla2xxx_wq", WQ_MEM_RECLAIM, 1);
+		ha->wq = alloc_workqueue("qla2xxx_wq", 0
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
+					 | WQ_PERCPU
+#endif
+					 | WQ_MEM_RECLAIM, 1);
 		vha->req = ha->req_q_map[req];
 		options |= BIT_1;
 		for (ques = 1; ques < ha->max_rsp_queues; ques++) {
@@ -1400,7 +1408,9 @@ qla2x00_abort_all_cmds(scsi_qla_host_t *vha, int res)
 }
 
 static int
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 qla2xxx_slave_alloc(struct scsi_device *sdev)
 #else
 qla2xxx_sdev_init(struct scsi_device *sdev)
@@ -1417,7 +1427,9 @@ qla2xxx_sdev_init(struct scsi_device *sdev)
 }
 
 static int
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 qla2xxx_slave_configure(struct scsi_device *sdev)
 #else
 qla2xxx_sdev_configure(struct scsi_device *sdev, struct queue_limits *lim)
@@ -1443,7 +1455,9 @@ qla2xxx_sdev_configure(struct scsi_device *sdev, struct queue_limits *lim)
 }
 
 static void
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) &&		\
+	(!defined(RHEL_RELEASE_CODE) ||				\
+	 RHEL_RELEASE_CODE -0 < RHEL_RELEASE_VERSION(10, 1))
 qla2xxx_slave_destroy(struct scsi_device *sdev)
 #else
 qla2xxx_sdev_destroy(struct scsi_device *sdev)
@@ -4668,18 +4682,22 @@ qla2xxx_pci_slot_reset(struct pci_dev *pdev)
 	ql_dbg(ql_dbg_aer, base_vha, 0x9004,
 	    "Slot Reset.\n");
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 0)
 	/* Workaround: qla2xxx driver which access hardware earlier
 	 * needs error state to be pci_channel_io_online.
 	 * Otherwise mailbox command timesout.
 	 */
 	pdev->error_state = pci_channel_io_normal;
+#endif
 
 	pci_restore_state(pdev);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 19, 0)
 	/* pci_restore_state() clears the saved_state flag of the device
 	 * save restored state which resets saved_state flag
 	 */
 	pci_save_state(pdev);
+#endif
 
 	if (ha->mem_only)
 		rc = pci_enable_device_mem(pdev);
