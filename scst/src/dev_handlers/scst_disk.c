@@ -25,6 +25,9 @@
 #include <linux/init.h>
 #include <linux/blkdev.h>
 #include <scsi/scsi_host.h>
+#include <linux/fs.h>
+#include <linux/limits.h>
+#include <linux/namei.h>
 #include <linux/slab.h>
 
 #define LOG_PREFIX           "dev_disk"
@@ -35,6 +38,7 @@
 #include "scst.h"
 #endif
 #include "scst_dev_handler.h"
+#include "../scst_pres.h"
 
 # define DISK_NAME           "dev_disk"
 # define DISK_PERF_NAME      "dev_disk_perf"
@@ -184,6 +188,83 @@ out_free_buf:
 out:
 	TRACE_EXIT_RES(res);
 	return res;
+}
+
+/*
+ * Directory into which PR state is dumped on device detach, named by the
+ * device serial number.  Empty string (the default) disables the feature.
+ */
+static char disk_pr_dump_dir[PATH_MAX];
+static DEFINE_MUTEX(disk_pr_dump_dir_mutex);
+
+static void disk_dump_pr_state(struct scst_device *dev, const char *serial)
+{
+	char *path = NULL;
+	char *buf = NULL;
+	struct file *f;
+	ssize_t len, written;
+	loff_t pos = 0;
+
+	mutex_lock(&disk_pr_dump_dir_mutex);
+	if (!disk_pr_dump_dir[0]) {
+		mutex_unlock(&disk_pr_dump_dir_mutex);
+		return;
+	}
+	path = kasprintf(GFP_KERNEL, "%s/%s", disk_pr_dump_dir, serial);
+	mutex_unlock(&disk_pr_dump_dir_mutex);
+
+	if (!path) {
+		PRINT_ERROR("%s: failed to allocate path for PR dump",
+			    dev->virt_name);
+		goto out;
+	}
+
+	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buf) {
+		PRINT_ERROR("%s: failed to allocate buffer for PR dump",
+			    dev->virt_name);
+		goto out;
+	}
+
+	mutex_lock(&dev->dev_pr_mutex);
+	len = scst_pr_state_show(dev, buf, PAGE_SIZE);
+	mutex_unlock(&dev->dev_pr_mutex);
+
+	f = filp_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (IS_ERR(f)) {
+		PRINT_ERROR("%s: failed to open PR dump file %s: %ld",
+			    dev->virt_name, path, PTR_ERR(f));
+		goto out;
+	}
+
+	written = kernel_write(f, buf, len, &pos);
+	filp_close(f, NULL);
+
+	if (written != len) {
+		struct path fpath;
+		int rc;
+
+		PRINT_ERROR("%s: short write to PR dump file %s: %zd/%zd",
+			    dev->virt_name, path, written, len);
+		rc = kern_path(path, 0, &fpath);
+		if (!rc)
+			scst_vfs_unlink_and_put(&fpath);
+		else
+			TRACE_PR("Unable to lookup '%s' - error %d", path, rc);
+	} else {
+		TRACE_DBG("%s: dumped PR state (%zd bytes) to %s",
+			  dev->virt_name, len, path);
+	}
+
+out:
+	kfree(buf);
+	kfree(path);
+}
+
+static void disk_pre_unregister(struct scst_device *dev)
+{
+	if (dev->dh_priv)
+		disk_dump_pr_state(dev, dev->dh_priv);
 }
 
 static void disk_detach(struct scst_device *dev)
@@ -673,6 +754,48 @@ static const struct attribute *disk_attrs[] = {
 	NULL,
 };
 
+static ssize_t disk_devtype_pr_dump_dir_show(struct kobject *kobj,
+					     struct kobj_attribute *attr,
+					     char *buf)
+{
+	ssize_t ret;
+
+	mutex_lock(&disk_pr_dump_dir_mutex);
+	ret = sysfs_emit(buf, "%s\n", disk_pr_dump_dir);
+	mutex_unlock(&disk_pr_dump_dir_mutex);
+
+	return ret;
+}
+
+static ssize_t disk_devtype_pr_dump_dir_store(struct kobject *kobj,
+					      struct kobj_attribute *attr,
+					      const char *buf, size_t count)
+{
+	size_t len = count;
+
+	if (len > 0 && buf[len - 1] == '\n')
+		len--;
+
+	if (len >= PATH_MAX)
+		return -ENAMETOOLONG;
+
+	mutex_lock(&disk_pr_dump_dir_mutex);
+	memcpy(disk_pr_dump_dir, buf, len);
+	disk_pr_dump_dir[len] = '\0';
+	mutex_unlock(&disk_pr_dump_dir_mutex);
+
+	return count;
+}
+
+static struct kobj_attribute disk_pr_dump_dir_attr =
+	__ATTR(pr_dump_dir, 0644, disk_devtype_pr_dump_dir_show,
+	       disk_devtype_pr_dump_dir_store);
+
+static const struct attribute *disk_devtype_attrs[] = {
+	&disk_pr_dump_dir_attr.attr,
+	NULL,
+};
+
 static struct scst_dev_type disk_devtype = {
 	.name =			DISK_NAME,
 	.type =			TYPE_DISK,
@@ -680,12 +803,14 @@ static struct scst_dev_type disk_devtype = {
 	.parse_atomic =		1,
 	.dev_done_atomic =	1,
 	.attach =		disk_attach,
+	.pre_unregister =	disk_pre_unregister,
 	.detach =		disk_detach,
 	.parse =		disk_parse,
 	.exec =			disk_exec,
 	.on_sg_tablesize_low = disk_on_sg_tablesize_low,
 	.dev_done =		disk_done,
 	.dev_attrs =		disk_attrs,
+	.devt_attrs =		disk_devtype_attrs,
 #if defined(CONFIG_SCST_DEBUG) || defined(CONFIG_SCST_TRACING)
 	.default_trace_flags = SCST_DEFAULT_DEV_LOG_FLAGS,
 	.trace_flags = &trace_flag,
@@ -698,6 +823,7 @@ static struct scst_dev_type disk_devtype_perf = {
 	.parse_atomic =		1,
 	.dev_done_atomic =	1,
 	.attach =		disk_attach,
+	.pre_unregister =	disk_pre_unregister,
 	.detach =		disk_detach,
 	.parse =		disk_parse,
 	.exec =			disk_perf_exec,
