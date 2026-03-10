@@ -77,11 +77,45 @@ static inline void compile_time_size_checks(void)
 	BUILD_BUG_ON(sizeof(struct pr_reg_lvb) != 248);
 }
 
+/*
+ * SCST_LKSB_WAITING:   Initial state; the heap lksb is registered with DLM
+ *                      and the caller is (or will be) waiting on its compl.
+ * SCST_LKSB_ABANDONED: The caller gave up (cancel also timed out or failed).
+ *                      scst_dlm_ast_heap is responsible for kfreeing the lksb.
+ * SCST_LKSB_AST_DONE:  The AST fired while the caller was still waiting, or
+ *                      between cancel timeout and the abandon cmpxchg.
+ *                      The caller is responsible for kfreeing the lksb.
+ */
+#define SCST_LKSB_WAITING   0
+#define SCST_LKSB_ABANDONED 1
+#define SCST_LKSB_AST_DONE  2
+
 static void scst_dlm_ast(void *astarg)
 {
 	struct scst_lksb *scst_lksb = astarg;
 
 	complete(&scst_lksb->compl);
+}
+
+/*
+ * AST callback used for heap-allocated lksbs in scst_dlm_lock_wait (bast ==
+ * NULL path) and scst_dlm_unlock_wait. Uses atomic_cmpxchg for a race-free
+ * handoff with the caller:
+ *  - WAITING -> AST_DONE: AST won; wake the caller, which will kfree.
+ *  - ABANDONED:           Caller gave up; kfree the heap lksb here.
+ */
+static void scst_dlm_ast_heap(void *astarg)
+{
+	struct scst_lksb *lksb = astarg;
+	int old = atomic_cmpxchg(&lksb->ast_state,
+				 SCST_LKSB_WAITING, SCST_LKSB_AST_DONE);
+
+	if (old == SCST_LKSB_ABANDONED) {
+		kfree(lksb);
+		return;
+	}
+	/* old == SCST_LKSB_WAITING: set to AST_DONE, wake the caller. */
+	complete(&lksb->compl);
 }
 
 /*
@@ -116,26 +150,109 @@ static int scst_dlm_lock_wait(dlm_lockspace_t *ls, int mode,
 			      struct scst_lksb *lksb, int flags,
 			      const char *name, void (*bast)(void *, int))
 {
+	struct scst_lksb *hlksb;
 	int res;
 
-	init_completion(&lksb->compl);
-	res = dlm_lock(ls, mode, &lksb->lksb, flags,
-			    (void *)name, name ? strlen(name) : 0, 0,
-			    scst_dlm_ast, lksb, bast);
-	if (res < 0)
-		goto out;
-	res = wait_for_completion_timeout(&lksb->compl, 60 * HZ);
-	if (res > 0)
-		res = lksb->lksb.sb_status;
-	else if (res == 0)
-		res = -ETIMEDOUT;
-	if (res < 0) {
-		int res2 = scst_dlm_cancel(ls, lksb, flags, name);
+	/*
+	 * Lksbs with a non-NULL BAST are embedded in the long-lived
+	 * scst_pr_dlm_data structure and are not freed after a timeout.
+	 * The BAST functions also require the original lksb pointer for
+	 * pr_dlm access and identity checks, so pass the caller's lksb
+	 * directly to DLM (original behaviour).
+	 */
+	if (bast) {
+		init_completion(&lksb->compl);
+		res = dlm_lock(ls, mode, &lksb->lksb, flags,
+			       (void *)name, name ? strlen(name) : 0, 0,
+			       scst_dlm_ast, lksb, bast);
+		if (res < 0)
+			goto out;
+		res = wait_for_completion_timeout(&lksb->compl, 60 * HZ);
+		if (res > 0)
+			res = lksb->lksb.sb_status;
+		else if (res == 0)
+			res = -ETIMEDOUT;
+		if (res < 0) {
+			int res2 = scst_dlm_cancel(ls, lksb, flags, name);
 
-		WARN(res2 < 0, "canceling lock %s / %08x failed: %d\n",
-		     name ? : "?", lksb->lksb.sb_lkid, res2);
+			WARN(res2 < 0, "canceling lock %s / %08x failed: %d\n",
+			     name ? : "?", lksb->lksb.sb_lkid, res2);
+		}
+		goto out;
 	}
 
+	/*
+	 * Lksbs with bast == NULL may be embedded in short-lived structures
+	 * (scst_dlm_rem_ua, scst_dev_registrant) or stack-allocated. Allocate
+	 * a private heap lksb — with an appended LVB buffer if needed — to
+	 * hand to DLM so that a deferred AST delivery after the caller frees
+	 * its containing structure does not cause a use-after-free.
+	 *
+	 * On success: DLM results and LVB data are copied back to the caller's
+	 * lksb and the heap lksb is freed immediately.
+	 * On cancel timeout: ast_state is set to ABANDONED; scst_dlm_ast_heap
+	 * kfrees the heap lksb (and its LVB buffer) when DLM delivers the AST.
+	 */
+	hlksb = kzalloc(sizeof(*hlksb) +
+			(lksb->lksb.sb_lvbptr ? PR_DLM_LVB_LEN : 0),
+			GFP_KERNEL);
+	if (!hlksb)
+		return -ENOMEM;
+	if (lksb->lksb.sb_lvbptr) {
+		hlksb->lksb.sb_lvbptr = (char *)(hlksb + 1);
+		memcpy(hlksb->lksb.sb_lvbptr, lksb->lksb.sb_lvbptr,
+		       PR_DLM_LVB_LEN);
+	}
+	if (flags & DLM_LKF_CONVERT)
+		hlksb->lksb.sb_lkid = lksb->lksb.sb_lkid;
+	atomic_set(&hlksb->ast_state, SCST_LKSB_WAITING);
+	init_completion(&hlksb->compl);
+
+	res = dlm_lock(ls, mode, &hlksb->lksb, flags,
+		       (void *)name, name ? strlen(name) : 0, 0,
+		       scst_dlm_ast_heap, hlksb, NULL);
+	if (res < 0)
+		goto out_free;
+
+	res = wait_for_completion_timeout(&hlksb->compl, 60 * HZ);
+	if (res > 0) {
+		/* Copy DLM results and LVB data back to the caller's lksb. */
+		res = hlksb->lksb.sb_status;
+		lksb->lksb.sb_lkid   = hlksb->lksb.sb_lkid;
+		lksb->lksb.sb_flags  = hlksb->lksb.sb_flags;
+		lksb->lksb.sb_status = hlksb->lksb.sb_status;
+		if (lksb->lksb.sb_lvbptr)
+			memcpy(lksb->lksb.sb_lvbptr, hlksb->lksb.sb_lvbptr,
+			       PR_DLM_LVB_LEN);
+		goto out_free;
+	}
+
+	res = -ETIMEDOUT;
+	{
+		int res2 = scst_dlm_cancel(ls, hlksb, flags, name);
+
+		if (res2 > 0)
+			/* Cancel AST delivered: DLM is done with hlksb. */
+			goto out_free;
+		WARN(res2 < 0, "canceling lock %s / %08x failed: %d\n",
+		     name ? : "?", hlksb->lksb.sb_lkid, res2);
+		/*
+		 * Cancel timed out (res2 == 0) or failed (res2 < 0). DLM may
+		 * still hold hlksb. Attempt WAITING -> ABANDONED so that
+		 * scst_dlm_ast_heap kfrees it when the AST eventually fires.
+		 * If the AST already fired between cancel's timeout and here
+		 * (state == AST_DONE), we still own hlksb.
+		 */
+		if (atomic_cmpxchg(&hlksb->ast_state,
+				   SCST_LKSB_WAITING,
+				   SCST_LKSB_ABANDONED) == SCST_LKSB_AST_DONE)
+			goto out_free;
+		/* Ownership transferred to scst_dlm_ast_heap. */
+		goto out;
+	}
+
+out_free:
+	kfree(hlksb);
 out:
 	return res;
 }
@@ -145,23 +262,50 @@ out:
  */
 static int scst_dlm_unlock_wait(dlm_lockspace_t *ls, struct scst_lksb *lksb)
 {
+	struct scst_lksb *hlksb;
 	int res;
 
 	sBUG_ON(!ls);
 
-	init_completion(&lksb->compl);
-	res = dlm_unlock(ls, lksb->lksb.sb_lkid, 0, &lksb->lksb, lksb);
+	/*
+	 * Same rationale as the bast == NULL path in scst_dlm_lock_wait:
+	 * heap-allocate the lksb passed to DLM so that a deferred AST
+	 * delivery after the caller frees its containing structure does not
+	 * cause a use-after-free.
+	 */
+	hlksb = kzalloc(sizeof(*hlksb), GFP_KERNEL);
+	if (!hlksb)
+		return -ENOMEM;
+	hlksb->lksb.sb_lkid = lksb->lksb.sb_lkid;
+	atomic_set(&hlksb->ast_state, SCST_LKSB_WAITING);
+	init_completion(&hlksb->compl);
+
+	res = dlm_unlock(ls, hlksb->lksb.sb_lkid, 0, &hlksb->lksb, hlksb);
 	if (res < 0)
-		goto out;
-	res = wait_for_completion_timeout(&lksb->compl, 60 * HZ);
+		goto out_free;
+
+	res = wait_for_completion_timeout(&hlksb->compl, 60 * HZ);
 	if (res > 0) {
-		res = lksb->lksb.sb_status;
+		res = hlksb->lksb.sb_status;
 		if (res == -DLM_EUNLOCK || res == -DLM_ECANCEL)
 			res = 0;
-	} else if (res == 0) {
-		res = -ETIMEDOUT;
+		goto out_free;
 	}
 
+	/*
+	 * Timeout: DLM may still deliver the AST. Attempt WAITING -> ABANDONED.
+	 * If the AST already fired (AST_DONE), we still own hlksb.
+	 */
+	res = -ETIMEDOUT;
+	if (atomic_cmpxchg(&hlksb->ast_state,
+			   SCST_LKSB_WAITING,
+			   SCST_LKSB_ABANDONED) == SCST_LKSB_AST_DONE)
+		goto out_free;
+	/* Ownership transferred to scst_dlm_ast_heap. */
+	goto out;
+
+out_free:
+	kfree(hlksb);
 out:
 	return res;
 }

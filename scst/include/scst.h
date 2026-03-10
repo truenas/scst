@@ -1989,6 +1989,11 @@ struct scst_lksb {
 	struct dlm_lksb  lksb;
 	struct completion compl;
 	struct scst_pr_dlm_data *pr_dlm;
+	/*
+	 * Used by scst_dlm_ast_heap to determine ownership of heap-allocated
+	 * lksbs. Values: SCST_LKSB_WAITING / ABANDONED / AST_DONE (scst_dlm.c).
+	 */
+	atomic_t ast_state;
 };
 
 /*
