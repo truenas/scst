@@ -117,8 +117,6 @@ static void qlt_response_pkt(struct scsi_qla_host *ha, struct rsp_que *rsp,
 	response_t *pkt);
 static int qlt_issue_task_mgmt(struct fc_port *sess, u64 lun,
 	int fn, void *iocb, int flags);
-static void qlt_send_term_exchange(struct qla_qpair *, struct qla_tgt_cmd
-	*cmd, struct atio_from_isp *atio, int ha_locked, int ul_abort);
 static void qlt_alloc_qfull_cmd(struct scsi_qla_host *vha,
 	struct atio_from_isp *atio, uint16_t status, int qfull);
 static void qlt_disable_vha(struct scsi_qla_host *vha);
@@ -150,22 +148,6 @@ DEFINE_MUTEX(qla_tgt_mutex);
 EXPORT_SYMBOL(qla_tgt_mutex);
 LIST_HEAD(qla_tgt_glist);
 EXPORT_SYMBOL(qla_tgt_glist);
-
-#if QLA_ENABLE_PI
-static const char *prot_op_str(u32 prot_op)
-{
-	switch (prot_op) {
-	case TARGET_PROT_NORMAL:	return "NORMAL";
-	case TARGET_PROT_DIN_INSERT:	return "DIN_INSERT";
-	case TARGET_PROT_DOUT_INSERT:	return "DOUT_INSERT";
-	case TARGET_PROT_DIN_STRIP:	return "DIN_STRIP";
-	case TARGET_PROT_DOUT_STRIP:	return "DOUT_STRIP";
-	case TARGET_PROT_DIN_PASS:	return "DIN_PASS";
-	case TARGET_PROT_DOUT_PASS:	return "DOUT_PASS";
-	default:			return "UNKNOWN";
-	}
-}
-#endif
 
 /* This API intentionally takes dest as a parameter, rather than returning
  * int value to avoid caller forgetting to issue wmb() after the store */
@@ -243,6 +225,10 @@ static void qlt_queue_unknown_atio(scsi_qla_host_t *vha,
 	struct qla_tgt_sess_op *u;
 	struct qla_tgt *tgt = vha->vha_tgt.qla_tgt;
 	unsigned long flags;
+	unsigned int add_cdb_len = 0;
+
+	/* atio must be the last member of qla_tgt_sess_op for add_cdb_len */
+	BUILD_BUG_ON(offsetof(struct qla_tgt_sess_op, atio) + sizeof(u->atio) != sizeof(*u));
 
 	if (tgt->tgt_stop) {
 		ql_dbg(ql_dbg_async, vha, 0x502c,
@@ -251,12 +237,17 @@ static void qlt_queue_unknown_atio(scsi_qla_host_t *vha,
 		goto out_term;
 	}
 
-	u = kzalloc(sizeof(*u), GFP_ATOMIC);
+	if (atio->u.raw.entry_type == ATIO_TYPE7 &&
+	    atio->u.isp24.fcp_cmnd.task_mgmt_flags == 0)
+		add_cdb_len =
+			((unsigned int) atio->u.isp24.fcp_cmnd.add_cdb_len) * 4;
+
+	u = kzalloc(sizeof(*u) + add_cdb_len, GFP_ATOMIC);
 	if (u == NULL)
 		goto out_term;
 
 	u->vha = vha;
-	memcpy(&u->atio, atio, sizeof(*atio));
+	memcpy(&u->atio, atio, sizeof(*atio) + add_cdb_len);
 	INIT_LIST_HEAD(&u->cmd_list);
 
 	spin_lock_irqsave(&vha->cmd_list_lock, flags);
@@ -269,7 +260,7 @@ out:
 	return;
 
 out_term:
-	qlt_send_term_exchange(vha->hw->base_qpair, NULL, atio, ha_locked, 0);
+	qlt_send_term_exchange(vha->hw->base_qpair, NULL, atio, ha_locked);
 	goto out;
 }
 
@@ -288,7 +279,7 @@ static void qlt_try_to_dequeue_unknown_atios(struct scsi_qla_host *vha,
 			    "Freeing unknown %s %p, because of Abort\n",
 			    "ATIO_TYPE7", u);
 			qlt_send_term_exchange(vha->hw->base_qpair, NULL,
-			    &u->atio, ha_locked, 0);
+			    &u->atio, ha_locked);
 			goto abort;
 		}
 
@@ -302,7 +293,7 @@ static void qlt_try_to_dequeue_unknown_atios(struct scsi_qla_host *vha,
 			    "Freeing unknown %s %p, because tgt is being stopped\n",
 			    "ATIO_TYPE7", u);
 			qlt_send_term_exchange(vha->hw->base_qpair, NULL,
-			    &u->atio, ha_locked, 0);
+			    &u->atio, ha_locked);
 		} else {
 			ql_dbg(ql_dbg_async + ql_dbg_verbose, vha, 0x503d,
 			    "Reschedule u %p, vha %p, host %p\n", u, vha, host);
@@ -1970,6 +1961,10 @@ static void qlt_24xx_retry_term_exchange(struct scsi_qla_host *vha,
 	 * ABTS response. So, in it ID fields are reversed.
 	 */
 
+	ql_dbg(ql_dbg_tgt_mgt, vha, 0xe082,
+	    "qla_target(%d): tag %u: Sending TERM EXCH CTIO for ABTS\n",
+	    vha->vp_idx, le32_to_cpu(entry->exchange_addr_to_abort));
+
 	ctio->entry_type = CTIO_TYPE7;
 	ctio->entry_count = 1;
 	ctio->nport_handle = entry->nport_handle;
@@ -2519,7 +2514,7 @@ out_err:
 	return -1;
 }
 
-static void qlt_unmap_sg(struct scsi_qla_host *vha, struct qla_tgt_cmd *cmd)
+void qlt_unmap_sg(struct scsi_qla_host *vha, struct qla_tgt_cmd *cmd)
 {
 	struct qla_hw_data *ha;
 	struct qla_qpair *qpair;
@@ -3544,7 +3539,6 @@ qlt_handle_dif_error(struct qla_qpair *qpair, struct qla_tgt_cmd *cmd,
 	uint8_t		*ep = &sts->expected_dif[0];
 	uint64_t	lba = cmd->se_cmd.t_task_lba;
 	uint8_t scsi_status, sense_key, asc, ascq;
-	unsigned long flags;
 	struct scsi_qla_host *vha = cmd->vha;
 
 	cmd->trc_flags |= TRC_DIF_ERR;
@@ -3618,13 +3612,10 @@ out:
 		vha->hw->tgt.tgt_ops->handle_data(cmd);
 		break;
 	default:
-		spin_lock_irqsave(&cmd->cmd_lock, flags);
-		if (cmd->aborted) {
-			spin_unlock_irqrestore(&cmd->cmd_lock, flags);
+		if (cmd->sent_term_exchg) {
 			vha->hw->tgt.tgt_ops->free_cmd(cmd);
 			break;
 		}
-		spin_unlock_irqrestore(&cmd->cmd_lock, flags);
 
 		qlt_send_resp_ctio(qpair, cmd, scsi_status, sense_key, asc,
 		    ascq);
@@ -3715,15 +3706,23 @@ static int __qlt_send_term_exchange(struct qla_qpair *qpair,
 {
 	struct scsi_qla_host *vha = qpair->vha;
 	struct ctio7_to_24xx *ctio24;
-	struct qla_hw_data *ha = vha->hw;
 	request_t *pkt;
 	int ret = 0;
 	uint16_t temp;
 
-	ql_dbg(ql_dbg_tgt, vha, 0xe009, "Sending TERM EXCH CTIO (ha=%p)\n", ha);
-
 	if (cmd)
 		vha = cmd->vha;
+
+	if (cmd) {
+		ql_dbg(ql_dbg_tgt_mgt, vha, 0xe009,
+		    "qla_target(%d): tag %lld: Sending TERM EXCH CTIO state %d cmd_sent_to_fw %u\n",
+		    vha->vp_idx, cmd->se_cmd.tag, cmd->state,
+		    cmd->cmd_sent_to_fw);
+	} else {
+		ql_dbg(ql_dbg_tgt_mgt, vha, 0xe009,
+		    "qla_target(%d): tag %u: Sending TERM EXCH CTIO (no cmd)\n",
+		    vha->vp_idx, le32_to_cpu(atio->u.isp24.exchange_addr));
+	}
 
 	pkt = (request_t *)qla2x00_alloc_iocbs_ready(qpair, NULL);
 	if (pkt == NULL) {
@@ -3769,9 +3768,22 @@ static int __qlt_send_term_exchange(struct qla_qpair *qpair,
 	return ret;
 }
 
-static void qlt_send_term_exchange(struct qla_qpair *qpair,
-	struct qla_tgt_cmd *cmd, struct atio_from_isp *atio, int ha_locked,
-	int ul_abort)
+/*
+ * Aborting a command that is active in the FW (i.e. cmd->cmd_sent_to_fw == 1)
+ * will usually trigger the FW to send a completion CTIO with error status,
+ * and the driver will then call the ->handle_data() or ->free_cmd() callbacks.
+ * This can be used to clear a command that is locked up in the FW unless there
+ * is something more seriously wrong.
+ *
+ * Aborting a command that is not active in the FW (i.e.
+ * cmd->cmd_sent_to_fw == 0) will not directly trigger any callbacks.  Instead,
+ * when the target mode midlevel calls qlt_rdy_to_xfer() or
+ * qlt_xmit_response(), the driver will see that the cmd has been aborted and
+ * call the appropriate callback immediately without performing the requested
+ * operation.
+ */
+void qlt_send_term_exchange(struct qla_qpair *qpair,
+	struct qla_tgt_cmd *cmd, struct atio_from_isp *atio, int ha_locked)
 {
 	struct scsi_qla_host *vha;
 	unsigned long flags = 0;
@@ -3795,10 +3807,14 @@ static void qlt_send_term_exchange(struct qla_qpair *qpair,
 		qlt_alloc_qfull_cmd(vha, atio, 0, 0);
 
 done:
-	if (cmd && !ul_abort && !cmd->aborted) {
-		if (cmd->sg_mapped)
-			qlt_unmap_sg(vha, cmd);
-		vha->hw->tgt.tgt_ops->free_cmd(cmd);
+	if (cmd) {
+		/*
+		 * Set this even if -ENOMEM above, since term exchange will be
+		 * sent eventually...
+		 */
+		cmd->sent_term_exchg = 1;
+		cmd->aborted = 1;
+		cmd->jiffies_at_term_exchg = jiffies;
 	}
 
 	if (!ha_locked)
@@ -3806,6 +3822,7 @@ done:
 
 	return;
 }
+EXPORT_SYMBOL(qlt_send_term_exchange);
 
 static void qlt_init_term_exchange(struct scsi_qla_host *vha)
 {
@@ -3856,36 +3873,35 @@ static void qlt_chk_exch_leak_thresh_hold(struct scsi_qla_host *vha)
 
 int qlt_abort_cmd(struct qla_tgt_cmd *cmd)
 {
-	struct qla_tgt *tgt = cmd->tgt;
-	struct scsi_qla_host *vha = tgt->vha;
-	struct se_cmd *se_cmd = &cmd->se_cmd;
+	struct scsi_qla_host *vha = cmd->vha;
+	struct qla_qpair *qpair = cmd->qpair;
 	unsigned long flags;
 
+	spin_lock_irqsave(qpair->qp_lock_ptr, flags);
+
 	ql_dbg(ql_dbg_tgt_mgt, vha, 0xf014,
-	    "qla_target(%d): terminating exchange for aborted cmd=%p "
-	    "(se_cmd=%p, tag=%llu)", vha->vp_idx, cmd, &cmd->se_cmd,
-	    se_cmd_tag(se_cmd));
+	    "qla_target(%d): tag %lld: cmd being aborted (state %d) %s; %s\n",
+	    vha->vp_idx, cmd->se_cmd.tag, cmd->state,
+	    cmd->cmd_sent_to_fw ? "sent to fw" : "not sent to fw",
+	    cmd->aborted ? "aborted" : "not aborted");
 
-	spin_lock_irqsave(&cmd->cmd_lock, flags);
-	if (cmd->aborted) {
-		if (cmd->sg_mapped)
-			qlt_unmap_sg(vha, cmd);
-
-		spin_unlock_irqrestore(&cmd->cmd_lock, flags);
-		/*
-		 * It's normal to see 2 calls in this path:
-		 *  1) XFER Rdy completion + CMD_T_ABORT
-		 *  2) TCM TMR - drain_state_list
-		 */
-		ql_dbg(ql_dbg_tgt_mgt, vha, 0xf016, "multiple abort. %p\n",
-		       cmd);
-		return -EIO;
+	if (cmd->state != QLA_TGT_STATE_DONE && !cmd->sent_term_exchg) {
+		if (!qpair->fw_started ||
+		    cmd->reset_count != qpair->chip_reset) {
+			/*
+			 * Chip was reset; just pretend that we sent the term
+			 * exchange.
+			 */
+			cmd->sent_term_exchg = 1;
+			cmd->aborted = 1;
+			cmd->jiffies_at_term_exchg = jiffies;
+		} else {
+			qlt_send_term_exchange(qpair, cmd, &cmd->atio, 1);
+		}
 	}
-	cmd->aborted = 1;
-	cmd->trc_flags |= TRC_ABORT;
-	spin_unlock_irqrestore(&cmd->cmd_lock, flags);
 
-	qlt_send_term_exchange(cmd->qpair, cmd, &cmd->atio, 0, 1);
+	spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
+
 	return 0;
 }
 EXPORT_SYMBOL(qlt_abort_cmd);
@@ -3905,6 +3921,13 @@ void qlt_free_cmd(struct qla_tgt_cmd *cmd)
 		qlt_decr_num_pend_cmds(cmd->vha);
 
 	BUG_ON(cmd->sg_mapped);
+
+	if (unlikely(cmd->cdb != &cmd->atio.u.isp24.fcp_cmnd.cdb[0])) {
+		kfree(cmd->cdb);
+		cmd->cdb = &cmd->atio.u.isp24.fcp_cmnd.cdb[0];
+		cmd->cdb_len = 16;
+	}
+
 	cmd->jiffies_at_free = get_jiffies_64();
 
 	if (!sess || !sess->se_sess) {
@@ -3915,42 +3938,6 @@ void qlt_free_cmd(struct qla_tgt_cmd *cmd)
 	cmd->vha->hw->tgt.tgt_ops->rel_cmd(cmd);
 }
 EXPORT_SYMBOL(qlt_free_cmd);
-
-/*
- * ha->hardware_lock supposed to be held on entry. Might drop it, then reaquire
- */
-static int qlt_term_ctio_exchange(struct qla_qpair *qpair, void *ctio,
-	struct qla_tgt_cmd *cmd, uint32_t status)
-{
-	int term = 0;
-#if QLA_ENABLE_PI
-	struct scsi_qla_host *vha = qpair->vha;
-
-	if (cmd->se_cmd.prot_op)
-		ql_dbg(ql_dbg_tgt_dif, vha, 0xe013,
-		    "Term DIF cmd: lba[0x%llx|%lld] len[0x%x] "
-		    "se_cmd=%p tag[%x] op %#x/%s",
-		     cmd->lba, cmd->lba,
-		     cmd->num_blks, &cmd->se_cmd,
-		     cmd->atio.u.isp24.exchange_addr,
-		     cmd->se_cmd.prot_op,
-		     prot_op_str(cmd->se_cmd.prot_op));
-#endif
-
-	if (ctio != NULL) {
-		struct ctio7_from_24xx *c = (struct ctio7_from_24xx *)ctio;
-
-		term = !(c->flags &
-		    cpu_to_le16(OF_TERM_EXCH));
-	} else
-		term = 1;
-
-	if (term)
-		qlt_send_term_exchange(qpair, cmd, &cmd->atio, 1, 0);
-
-	return term;
-}
-
 
 /* ha->hardware_lock supposed to be held on entry */
 static void *qlt_ctio_to_cmd(struct scsi_qla_host *vha,
@@ -4008,12 +3995,14 @@ static void *qlt_ctio_to_cmd(struct scsi_qla_host *vha,
  * ha->hardware_lock supposed to be held on entry. Might drop it, then reaquire
  */
 static void qlt_do_ctio_completion(struct scsi_qla_host *vha,
-    struct rsp_que *rsp, uint32_t handle, uint32_t status, void *ctio)
+	struct rsp_que *rsp, uint32_t handle, uint32_t status,
+	struct ctio7_from_24xx *ctio)
 {
 	struct qla_hw_data *ha = vha->hw;
 	struct se_cmd *se_cmd;
 	struct qla_tgt_cmd *cmd;
 	struct qla_qpair *qpair = rsp->qpair;
+	uint16_t ctio_flags;
 
 	if (handle & CTIO_INTERMEDIATE_HANDLE_MARK) {
 		/* That could happen only in case of an error/reset/abort */
@@ -4025,15 +4014,29 @@ static void qlt_do_ctio_completion(struct scsi_qla_host *vha,
 		return;
 	}
 
-	cmd = qlt_ctio_to_cmd(vha, rsp, handle, ctio);
-	if (cmd == NULL)
-		return;
+	ctio_flags = le16_to_cpu(ctio->flags);
 
-	if ((le16_to_cpu(((struct ctio7_from_24xx *)ctio)->flags) & CTIO7_FLAGS_DATA_OUT) &&
-	    cmd->sess) {
-		qlt_chk_edif_rx_sa_delete_pending(vha, cmd->sess,
-		    (struct ctio7_from_24xx *)ctio);
+	cmd = qlt_ctio_to_cmd(vha, rsp, handle, ctio);
+	if (unlikely(cmd == NULL)) {
+		if ((handle & ~QLA_TGT_HANDLE_MASK) == QLA_TGT_SKIP_HANDLE &&
+		    (ctio_flags & 0xe1ff) == (CTIO7_FLAGS_STATUS_MODE_1 |
+		     CTIO7_FLAGS_TERMINATE)) {
+			u32 tag = le32_to_cpu(ctio->exchange_address);
+
+			if (status == CTIO_SUCCESS)
+				ql_dbg(ql_dbg_tgt_mgt, vha, 0xe083,
+				    "qla_target(%d): tag %u: term exchange successful\n",
+				    vha->vp_idx, tag);
+			else
+				ql_dbg(ql_dbg_tgt_mgt, vha, 0xe084,
+				    "qla_target(%d): tag %u: term exchange failed; status = 0x%x\n",
+				    vha->vp_idx, tag, status);
+		}
+		return;
 	}
+
+	if ((ctio_flags & CTIO7_FLAGS_DATA_OUT) && cmd->sess)
+		qlt_chk_edif_rx_sa_delete_pending(vha, cmd->sess, ctio);
 
 	se_cmd = &cmd->se_cmd;
 	cmd->cmd_sent_to_fw = 0;
@@ -4041,22 +4044,35 @@ static void qlt_do_ctio_completion(struct scsi_qla_host *vha,
 	qlt_unmap_sg(vha, cmd);
 
 	if (unlikely(status != CTIO_SUCCESS)) {
+		bool term_exchg = false;
+
+		/*
+		 * If the hardware terminated the exchange, then we don't need
+		 * to send an explicit term exchange message.
+		 */
+		if (ctio_flags & OF_TERM_EXCH) {
+			cmd->sent_term_exchg = 1;
+			cmd->aborted = 1;
+			cmd->jiffies_at_term_exchg = jiffies;
+		}
+
 		switch (status & 0xFFFF) {
 		case CTIO_INVALID_RX_ID:
+			term_exchg = true;
 			if (printk_ratelimit())
 				dev_info(&vha->hw->pdev->dev,
 				    "qla_target(%d): CTIO with INVALID_RX_ID ATIO attr %x CTIO Flags %x|%x\n",
 				    vha->vp_idx, cmd->atio.u.isp24.attr,
 				    ((cmd->ctio_flags >> 9) & 0xf),
 				    cmd->ctio_flags);
-
 			break;
+
 		case CTIO_LIP_RESET:
 		case CTIO_TARGET_RESET:
 		case CTIO_ABORTED:
-			/* driver request abort via Terminate exchange */
+			term_exchg = true;
+			fallthrough;
 		case CTIO_TIMEOUT:
-			/* They are OK */
 			ql_dbg(ql_dbg_tgt_mgt, vha, 0xf058,
 			    "qla_target(%d): CTIO with "
 			    "status %#x received, state %x, se_cmd %p, "
@@ -4077,6 +4093,7 @@ static void qlt_do_ctio_completion(struct scsi_qla_host *vha,
 			    logged_out ? "PORT LOGGED OUT" : "PORT UNAVAILABLE",
 			    status, cmd->state, se_cmd);
 
+			term_exchg = true;
 			if (logged_out && cmd->sess) {
 				/*
 				 * Session is already logged out, but we need
@@ -4102,7 +4119,7 @@ static void qlt_do_ctio_completion(struct scsi_qla_host *vha,
 			    *((u64 *)&crc->actual_dif[0]),
 			    *((u64 *)&crc->expected_dif[0]));
 
-			qlt_handle_dif_error(qpair, cmd, ctio);
+			qlt_handle_dif_error(qpair, cmd, crc);
 			return;
 		}
 
@@ -4122,19 +4139,21 @@ static void qlt_do_ctio_completion(struct scsi_qla_host *vha,
 			break;
 		}
 
+		cmd->trc_flags |= TRC_CTIO_ERR;
 
-		/* "cmd->aborted" means
-		 * cmd is already aborted/terminated, we don't
-		 * need to terminate again.  The exchange is already
-		 * cleaned up/freed at FW level.  Just cleanup at driver
-		 * level.
+		/*
+		 * In state QLA_TGT_STATE_NEED_DATA the failed CTIO was for
+		 * Data-Out, so either abort the exchange or try sending check
+		 * condition with sense data depending on the severity of
+		 * the error.  In state QLA_TGT_STATE_PROCESSED the failed CTIO
+		 * was for status (and possibly Data-In), so don't try sending
+		 * an error status again in that case (if the error was for
+		 * Data-In with status, we could try sending status without
+		 * Data-In, but we don't do that currently).
 		 */
-		if ((cmd->state != QLA_TGT_STATE_NEED_DATA) &&
-		    (!cmd->aborted)) {
-			cmd->trc_flags |= TRC_CTIO_ERR;
-			if (qlt_term_ctio_exchange(qpair, ctio, cmd, status))
-				return;
-		}
+		if (!cmd->sent_term_exchg &&
+		    (term_exchg || cmd->state != QLA_TGT_STATE_NEED_DATA))
+			qlt_send_term_exchange(qpair, cmd, &cmd->atio, 1);
 	}
 
 	if (cmd->state == QLA_TGT_STATE_PROCESSED) {
@@ -4209,7 +4228,6 @@ static void __qlt_do_work(struct qla_tgt_cmd *cmd)
 	struct qla_hw_data *ha = vha->hw;
 	struct fc_port *sess = cmd->sess;
 	struct atio_from_isp *atio = &cmd->atio;
-	unsigned char *cdb;
 	unsigned long flags;
 	uint32_t data_length;
 	int ret, fcp_task_attr, data_dir, bidi = 0;
@@ -4225,8 +4243,6 @@ static void __qlt_do_work(struct qla_tgt_cmd *cmd)
 		goto out_term;
 	}
 
-	spin_lock_init(&cmd->cmd_lock);
-	cdb = &atio->u.isp24.fcp_cmnd.cdb[0];
 	se_cmd_tag(&cmd->se_cmd) = le32_to_cpu(atio->u.isp24.exchange_addr);
 
 	if (atio->u.isp24.fcp_cmnd.rddata &&
@@ -4244,7 +4260,7 @@ static void __qlt_do_work(struct qla_tgt_cmd *cmd)
 	    atio->u.isp24.fcp_cmnd.task_attr);
 	data_length = get_datalen_for_atio(atio);
 
-	ret = ha->tgt.tgt_ops->handle_cmd(vha, cmd, cdb, data_length,
+	ret = ha->tgt.tgt_ops->handle_cmd(vha, cmd, cmd->cdb, data_length,
 				          fcp_task_attr, data_dir, bidi);
 	if (ret != 0)
 		goto out_term;
@@ -4262,9 +4278,14 @@ out_term:
 	 */
 	cmd->trc_flags |= TRC_DO_WORK_ERR;
 	spin_lock_irqsave(qpair->qp_lock_ptr, flags);
-	qlt_send_term_exchange(qpair, NULL, &cmd->atio, 1, 0);
+	qlt_send_term_exchange(qpair, NULL, &cmd->atio, 1);
 
 	qlt_decr_num_pend_cmds(vha);
+	if (unlikely(cmd->cdb != &cmd->atio.u.isp24.fcp_cmnd.cdb[0])) {
+		kfree(cmd->cdb);
+		cmd->cdb = &cmd->atio.u.isp24.fcp_cmnd.cdb[0];
+		cmd->cdb_len = 16;
+	}
 	cmd->vha->hw->tgt.tgt_ops->rel_cmd(cmd);
 	spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
 
@@ -4390,18 +4411,43 @@ out:
 #endif
 }
 
+/*
+ * Safely make a fixed-length copy of a variable-length atio by truncating the
+ * CDB if necessary.
+ */
+static void memcpy_atio(struct atio_from_isp *dst,
+	const struct atio_from_isp *src)
+{
+	int len;
+
+	memcpy(dst, src, sizeof(*dst));
+
+	/*
+	 * If the CDB was truncated, prevent get_datalen_for_atio() from
+	 * accessing invalid memory.
+	 */
+	len = src->u.isp24.fcp_cmnd.add_cdb_len;
+	if (unlikely(len != 0)) {
+		dst->u.isp24.fcp_cmnd.add_cdb_len = 0;
+		memcpy(&dst->u.isp24.fcp_cmnd.add_cdb[0],
+		       &src->u.isp24.fcp_cmnd.add_cdb[len * 4],
+		       4);
+	}
+}
+
 static struct qla_tgt_cmd *qlt_get_tag(scsi_qla_host_t *vha,
 				       struct fc_port *sess,
 				       struct atio_from_isp *atio)
 {
 	struct qla_tgt_cmd *cmd;
+	int add_cdb_len;
 
 	cmd = vha->hw->tgt.tgt_ops->get_cmd(sess);
 	if (!cmd)
 		return NULL;
 
 	cmd->cmd_type = TYPE_TGT_CMD;
-	memcpy(&cmd->atio, atio, sizeof(*atio));
+	memcpy_atio(&cmd->atio, atio);
 	INIT_LIST_HEAD(&cmd->sess_cmd_list);
 	cmd->state = QLA_TGT_STATE_NEW;
 	cmd->tgt = vha->vha_tgt.qla_tgt;
@@ -4420,6 +4466,29 @@ static struct qla_tgt_cmd *qlt_get_tag(scsi_qla_host_t *vha,
 	cmd->reset_count = vha->hw->base_qpair->chip_reset;
 	cmd->vp_idx = vha->vp_idx;
 	cmd->edif = sess->edif.enable;
+
+	cmd->cdb = &cmd->atio.u.isp24.fcp_cmnd.cdb[0];
+	cmd->cdb_len = 16;
+
+	/*
+	 * NOTE: memcpy_atio() set cmd->atio.u.isp24.fcp_cmnd.add_cdb_len to 0,
+	 * so use the original value here.
+	 */
+	add_cdb_len = atio->u.isp24.fcp_cmnd.add_cdb_len;
+	if (unlikely(add_cdb_len != 0)) {
+		int cdb_len = 16 + add_cdb_len * 4;
+		u8 *cdb;
+
+		cdb = kmalloc(cdb_len, GFP_ATOMIC);
+		if (unlikely(!cdb)) {
+			vha->hw->tgt.tgt_ops->free_cmd(cmd);
+			return NULL;
+		}
+		/* CAUTION: copy CDB from atio not cmd->atio */
+		memcpy(cdb, atio->u.isp24.fcp_cmnd.cdb, cdb_len);
+		cmd->cdb = cdb;
+		cmd->cdb_len = cdb_len;
+	}
 
 	return cmd;
 }
@@ -5473,7 +5542,7 @@ static int __qlt_send_busy(struct qla_qpair *qpair,
 	sess = qla2x00_find_fcport_by_nportid(vha, &id, 1);
 	spin_unlock_irqrestore(&ha->tgt.sess_lock, flags);
 	if (!sess) {
-		qlt_send_term_exchange(qpair, NULL, atio, 1, 0);
+		qlt_send_term_exchange(qpair, NULL, atio, 1);
 		return 0;
 	}
 	/* Sending marker isn't necessary, since we called from ISR */
@@ -5583,13 +5652,15 @@ qlt_alloc_qfull_cmd(struct scsi_qla_host *vha,
 
 	qlt_incr_num_pend_cmds(vha);
 	INIT_LIST_HEAD(&cmd->cmd_list);
-	memcpy(&cmd->atio, atio, sizeof(*atio));
+	memcpy_atio(&cmd->atio, atio);
 
 	cmd->tgt = vha->vha_tgt.qla_tgt;
 	cmd->vha = vha;
 	cmd->reset_count = ha->base_qpair->chip_reset;
 	cmd->q_full = 1;
 	cmd->qpair = ha->base_qpair;
+	cmd->cdb = &cmd->atio.u.isp24.fcp_cmnd.cdb[0];
+	cmd->cdb_len = 16;
 
 	if (qfull) {
 		cmd->q_full = 1;
@@ -5777,7 +5848,7 @@ static void qlt_24xx_atio_pkt(struct scsi_qla_host *vha,
 				ql_dbg(ql_dbg_tgt, vha, 0xe05f,
 				    "qla_target: Unable to send command to target, sending TERM EXCHANGE for rsp\n");
 				qlt_send_term_exchange(ha->base_qpair, NULL,
-				    atio, 1, 0);
+				    atio, 1);
 				break;
 			case -EBUSY:
 				ql_dbg(ql_dbg_tgt, vha, 0xe060,
@@ -5984,7 +6055,7 @@ static void qlt_response_pkt(struct scsi_qla_host *vha,
 				ql_dbg(ql_dbg_tgt, vha, 0xe05f,
 				    "qla_target: Unable to send command to target, sending TERM EXCHANGE for rsp\n");
 				qlt_send_term_exchange(rsp->qpair, NULL,
-				    atio, 1, 0);
+				    atio, 1);
 				break;
 			case -EBUSY:
 				ql_dbg(ql_dbg_tgt, vha, 0xe060,
@@ -6004,26 +6075,6 @@ static void qlt_response_pkt(struct scsi_qla_host *vha,
 		}
 	}
 	break;
-
-	case CONTINUE_TGT_IO_TYPE:
-	{
-		struct ctio_to_2xxx *entry = (struct ctio_to_2xxx *)pkt;
-
-		qlt_do_ctio_completion(vha, rsp, entry->handle,
-		    le16_to_cpu(entry->status)|(pkt->entry_status << 16),
-		    entry);
-		break;
-	}
-
-	case CTIO_A64_TYPE:
-	{
-		struct ctio_to_2xxx *entry = (struct ctio_to_2xxx *)pkt;
-
-		qlt_do_ctio_completion(vha, rsp, entry->handle,
-		    le16_to_cpu(entry->status)|(pkt->entry_status << 16),
-		    entry);
-		break;
-	}
 
 	case IMMED_NOTIFY_TYPE:
 		ql_dbg(ql_dbg_tgt, vha, 0xe035, "%s", "IMMED_NOTIFY\n");
@@ -6894,7 +6945,7 @@ qlt_24xx_process_atio_queue(struct scsi_qla_host *vha, uint8_t ha_locked)
 
 			adjust_corrupted_atio(pkt);
 			qlt_send_term_exchange(ha->base_qpair, NULL, pkt,
-			    ha_locked, 0);
+			    ha_locked);
 		} else {
 			qlt_24xx_atio_pkt_all_vps(vha,
 			    (struct atio_from_isp *)pkt, ha_locked);
