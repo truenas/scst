@@ -858,6 +858,16 @@ static void init_max_params(void)
 	return;
 }
 
+static void failover_start(int sig __attribute__((unused)))
+{
+	failover_mode = 1;
+}
+
+static void failover_end(int sig __attribute__((unused)))
+{
+	failover_mode = 0;
+}
+
 int main(int argc, char **argv)
 {
 	int ch, longindex;
@@ -881,6 +891,14 @@ int main(int argc, char **argv)
 	 */
 	struct sigaction act = (struct sigaction) { .sa_handler = SIG_IGN };
 	int rc = sigaction(SIGPIPE, &act, NULL);
+	assert(rc == 0);
+
+	act = (struct sigaction) { .sa_handler = failover_start };
+	rc = sigaction(SIGUSR1, &act, NULL);
+	assert(rc == 0);
+
+	act = (struct sigaction) { .sa_handler = failover_end };
+	rc = sigaction(SIGUSR2, &act, NULL);
 	assert(rc == 0);
 
 	while ((ch = getopt_long(argc, argv, "c:fd:s:u:g:a:p:vh", long_options, &longindex)) >= 0) {

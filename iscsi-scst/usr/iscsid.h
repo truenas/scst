@@ -18,6 +18,7 @@
 #define ISCSID_H
 
 #include <search.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <poll.h>
 #include <assert.h>
@@ -263,6 +264,7 @@ extern const char *get_error_str(int error);
 /* iscsid.c */
 extern int iscsi_enabled;
 extern char *internal_portal;
+extern volatile sig_atomic_t failover_mode;
 
 extern int cmnd_execute(struct connection *conn);
 extern void cmnd_finish(struct connection *conn);

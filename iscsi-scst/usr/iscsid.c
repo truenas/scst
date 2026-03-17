@@ -28,6 +28,7 @@
 
 int iscsi_enabled;
 char *internal_portal;
+volatile sig_atomic_t failover_mode;
 
 static u32 ttt;
 
@@ -808,6 +809,13 @@ static void login_start(struct connection *conn)
 	if (conn->initiator == NULL) {
 		log_error("Unable to duplicate initiator's name %s", name);
 		login_rsp_tgt_err(conn, ISCSI_STATUS_NO_RESOURCES);
+		return;
+	}
+
+	if (failover_mode) {
+		log_info("Initiator %s login rejected: failover in progress",
+			 conn->initiator);
+		login_rsp_tgt_err(conn, ISCSI_STATUS_SVC_UNAVAILABLE);
 		return;
 	}
 
