@@ -2073,7 +2073,6 @@ static void qlt_do_tmr_work(struct work_struct *work)
 	struct qla_hw_data *ha = mcmd->vha->hw;
 	int rc;
 	uint32_t tag;
-	unsigned long flags;
 
 	switch (mcmd->tmr_func) {
 	case QLA_TGT_ABTS:
@@ -2088,34 +2087,12 @@ static void qlt_do_tmr_work(struct work_struct *work)
 	    mcmd->tmr_func, tag);
 
 	if (rc != 0) {
-		spin_lock_irqsave(mcmd->qpair->qp_lock_ptr, flags);
-		switch (mcmd->tmr_func) {
-		case QLA_TGT_ABTS:
-			mcmd->fc_tm_rsp = FCP_TMF_REJECTED;
-			qlt_build_abts_resp_iocb(mcmd);
-			break;
-		case QLA_TGT_LUN_RESET:
-		case QLA_TGT_CLEAR_TS:
-		case QLA_TGT_ABORT_TS:
-		case QLA_TGT_CLEAR_ACA:
-		case QLA_TGT_TARGET_RESET:
-			qlt_send_busy(mcmd->qpair, &mcmd->orig_iocb.atio,
-			    qla_sam_status);
-			break;
-
-		case QLA_TGT_ABORT_ALL:
-		case QLA_TGT_NEXUS_LOSS_SESS:
-		case QLA_TGT_NEXUS_LOSS:
-			qlt_send_notify_ack(mcmd->qpair,
-			    &mcmd->orig_iocb.imm_ntfy, 0, 0, 0, 0, 0, 0);
-			break;
-		}
-		spin_unlock_irqrestore(mcmd->qpair->qp_lock_ptr, flags);
-
 		ql_dbg(ql_dbg_tgt_mgt, mcmd->vha, 0xf052,
 		    "qla_target(%d):  tgt_ops->handle_tmr() failed: %d\n",
 		    mcmd->vha->vp_idx, rc);
-		mempool_free(mcmd, qla_tgt_mgmt_cmd_mempool);
+		mcmd->flags |= QLA24XX_MGMT_LLD_OWNED;
+		mcmd->fc_tm_rsp = FCP_TMF_FAILED;
+		qlt_xmit_tm_rsp(mcmd);
 	}
 }
 
@@ -2311,6 +2288,21 @@ void qlt_free_mcmd(struct qla_tgt_mgmt_cmd *mcmd)
 EXPORT_SYMBOL(qlt_free_mcmd);
 
 /*
+ * If the upper layer knows about this mgmt cmd, then call its ->free_cmd()
+ * callback, which will eventually call qlt_free_mcmd().  Otherwise, call
+ * qlt_free_mcmd() directly.
+ */
+void qlt_free_ul_mcmd(struct qla_hw_data *ha, struct qla_tgt_mgmt_cmd *mcmd)
+{
+	if (!mcmd)
+		return;
+	if (mcmd->flags & QLA24XX_MGMT_LLD_OWNED)
+		qlt_free_mcmd(mcmd);
+	else
+		ha->tgt.tgt_ops->free_mcmd(mcmd);
+}
+
+/*
  * ha->hardware_lock supposed to be held on entry. Might drop it, then
  * reacquire
  */
@@ -2402,12 +2394,12 @@ void qlt_xmit_tm_rsp(struct qla_tgt_mgmt_cmd *mcmd)
 			"RESET-TMR online/active/old-count/new-count = %d/%d/%d/%d.\n",
 			vha->flags.online, qla2x00_reset_active(vha),
 			mcmd->reset_count, qpair->chip_reset);
-		ha->tgt.tgt_ops->free_mcmd(mcmd);
+		qlt_free_ul_mcmd(ha, mcmd);
 		spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
 		return;
 	}
 
-	if (mcmd->flags == QLA24XX_MGMT_SEND_NACK) {
+	if (mcmd->flags & QLA24XX_MGMT_SEND_NACK) {
 		switch (mcmd->orig_iocb.imm_ntfy.u.isp24.status_subcode) {
 		case ELS_LOGO:
 		case ELS_PRLO:
@@ -2440,7 +2432,7 @@ void qlt_xmit_tm_rsp(struct qla_tgt_mgmt_cmd *mcmd)
 	 * qlt_xmit_tm_rsp() returns here..
 	 */
 	if (free_mcmd)
-		ha->tgt.tgt_ops->free_mcmd(mcmd);
+		qlt_free_ul_mcmd(ha, mcmd);
 
 	spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
 }
@@ -3291,12 +3283,7 @@ int qlt_xmit_response(struct qla_tgt_cmd *cmd, int xmit_type,
 	uint32_t full_req_cnt = 0;
 	unsigned long flags = 0;
 	int res;
-
-	if (!qpair->fw_started || (cmd->reset_count != qpair->chip_reset) ||
-	    (cmd->sess && cmd->sess->deleted)) {
-		cmd->state = QLA_TGT_STATE_PROCESSED;
-		return 0;
-	}
+	int pre_xmit_res;
 
 	ql_dbg_qp(ql_dbg_tgt, qpair, 0xe018,
 	    "is_send_status=%d, cmd->bufflen=%d, cmd->sg_cnt=%d, cmd->dma_data_direction=%d se_cmd[%p] qp %d\n",
@@ -3304,32 +3291,38 @@ int qlt_xmit_response(struct qla_tgt_cmd *cmd, int xmit_type,
 	    1 : 0, cmd->bufflen, cmd->sg_cnt, cmd->dma_data_direction,
 	    &cmd->se_cmd, qpair->id);
 
-	res = qlt_pre_xmit_response(cmd, &prm, xmit_type, scsi_status,
+	pre_xmit_res = qlt_pre_xmit_response(cmd, &prm, xmit_type, scsi_status,
 	    &full_req_cnt);
-	if (unlikely(res != 0)) {
-		return res;
-	}
+	/*
+	 * Check pre_xmit_res later because we want to check other errors
+	 * first.
+	 */
 
 	spin_lock_irqsave(qpair->qp_lock_ptr, flags);
+
+	if (unlikely(cmd->sent_term_exchg ||
+		     cmd->sess->deleted ||
+		     !qpair->fw_started ||
+		     cmd->reset_count != qpair->chip_reset)) {
+		ql_dbg(ql_dbg_tgt_mgt, vha, 0xe101,
+		    "qla_target(%d): tag %lld: skipping send response for aborted cmd\n",
+		    vha->vp_idx, cmd->se_cmd.tag);
+		qlt_unmap_sg(vha, cmd);
+		cmd->state = QLA_TGT_STATE_PROCESSED;
+		vha->hw->tgt.tgt_ops->free_cmd(cmd);
+		spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
+		return 0;
+	}
+
+	/* Check for errors from qlt_pre_xmit_response(). */
+	res = pre_xmit_res;
+	if (unlikely(res))
+		goto out_unmap_unlock;
 
 	if (xmit_type == QLA_TGT_XMIT_STATUS)
 		qpair->tgt_counters.core_qla_snd_status++;
 	else
 		qpair->tgt_counters.core_qla_que_buf++;
-
-	if (!qpair->fw_started || cmd->reset_count != qpair->chip_reset) {
-		/*
-		 * Either the port is not online or this request was from
-		 * previous life, just abort the processing.
-		 */
-		cmd->state = QLA_TGT_STATE_PROCESSED;
-		ql_dbg_qp(ql_dbg_async, qpair, 0xe101,
-			"RESET-RSP online/active/old-count/new-count = %d/%d/%d/%d.\n",
-			vha->flags.online, qla2x00_reset_active(vha),
-			cmd->reset_count, qpair->chip_reset);
-		res = 0;
-		goto out_unmap_unlock;
-	}
 
 	/* Does F/W have an IOCBs for this request */
 	res = qlt_check_reserve_free_req(qpair, full_req_cnt);
@@ -3449,6 +3442,7 @@ int qlt_rdy_to_xfer(struct qla_tgt_cmd *cmd)
 	struct qla_tgt_prm prm;
 	unsigned long flags = 0;
 	int res = 0;
+	int pci_map_res;
 	struct qla_qpair *qpair = cmd->qpair;
 
 	memset(&prm, 0, sizeof(prm));
@@ -3457,28 +3451,36 @@ int qlt_rdy_to_xfer(struct qla_tgt_cmd *cmd)
 	prm.sg = NULL;
 	prm.req_cnt = 1;
 
-	if (!qpair->fw_started || (cmd->reset_count != qpair->chip_reset) ||
-	    (cmd->sess && cmd->sess->deleted)) {
-		/*
-		 * Either the port is not online or this request was from
-		 * previous life, just abort the processing.
-		 */
+	/* Calculate number of entries and segments required */
+	pci_map_res = qlt_pci_map_calc_cnt(&prm);
+	/*
+	 * Check pci_map_res later because we want to check other errors first.
+	 */
+
+	spin_lock_irqsave(qpair->qp_lock_ptr, flags);
+
+	if (unlikely(cmd->sent_term_exchg ||
+		     cmd->sess->deleted ||
+		     !qpair->fw_started ||
+		     cmd->reset_count != qpair->chip_reset)) {
+		ql_dbg(ql_dbg_tgt_mgt, vha, 0xe102,
+		    "qla_target(%d): tag %lld: skipping data-out for aborted cmd\n",
+		    vha->vp_idx, cmd->se_cmd.tag);
+		qlt_unmap_sg(vha, cmd);
 		cmd->aborted = 1;
 		cmd->write_data_transferred = 0;
 		cmd->state = QLA_TGT_STATE_DATA_IN;
 		vha->hw->tgt.tgt_ops->handle_data(cmd);
-		ql_dbg_qp(ql_dbg_async, qpair, 0xe102,
-			"RESET-XFR online/active/old-count/new-count = %d/%d/%d/%d.\n",
-			vha->flags.online, qla2x00_reset_active(vha),
-			cmd->reset_count, qpair->chip_reset);
+		spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
 		return 0;
 	}
 
-	/* Calculate number of entries and segments required */
-	if (qlt_pci_map_calc_cnt(&prm) != 0)
-		return -EAGAIN;
+	/* Check for errors from qlt_pci_map_calc_cnt(). */
+	if (unlikely(pci_map_res != 0)) {
+		res = -EAGAIN;
+		goto out_unlock_free_unmap;
+	}
 
-	spin_lock_irqsave(qpair->qp_lock_ptr, flags);
 	/* Does F/W have an IOCBs for this request */
 	res = qlt_check_reserve_free_req(qpair, prm.req_cnt);
 	if (res != 0)
@@ -3704,14 +3706,35 @@ static int __qlt_send_term_exchange(struct qla_qpair *qpair,
 	struct qla_tgt_cmd *cmd,
 	struct atio_from_isp *atio)
 {
-	struct scsi_qla_host *vha = qpair->vha;
 	struct ctio7_to_24xx *ctio24;
-	request_t *pkt;
-	int ret = 0;
+	struct scsi_qla_host *vha;
+	uint16_t loop_id;
 	uint16_t temp;
 
-	if (cmd)
+	if (cmd) {
 		vha = cmd->vha;
+		loop_id = cmd->loop_id;
+	} else {
+		port_id_t id = be_to_port_id(atio->u.isp24.fcp_hdr.s_id);
+		struct qla_hw_data *ha;
+		struct fc_port *sess;
+		unsigned long flags;
+
+		vha = qpair->vha;
+		ha = vha->hw;
+
+		/*
+		 * CTIO7_NHANDLE_UNRECOGNIZED works when aborting an idle
+		 * command but not when aborting a command with an active CTIO
+		 * exchange.
+		 */
+		loop_id = CTIO7_NHANDLE_UNRECOGNIZED;
+		spin_lock_irqsave(&ha->tgt.sess_lock, flags);
+		sess = qla2x00_find_fcport_by_nportid(vha, &id, 1);
+		if (sess)
+			loop_id = sess->loop_id;
+		spin_unlock_irqrestore(&ha->tgt.sess_lock, flags);
+	}
 
 	if (cmd) {
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xe009,
@@ -3724,31 +3747,20 @@ static int __qlt_send_term_exchange(struct qla_qpair *qpair,
 		    vha->vp_idx, le32_to_cpu(atio->u.isp24.exchange_addr));
 	}
 
-	pkt = (request_t *)qla2x00_alloc_iocbs_ready(qpair, NULL);
-	if (pkt == NULL) {
+	ctio24 = qla2x00_alloc_iocbs_ready(qpair, NULL);
+	if (!ctio24) {
 		ql_dbg(ql_dbg_tgt, vha, 0xe050,
 		    "qla_target(%d): %s failed: unable to allocate "
 		    "request packet\n", vha->vp_idx, __func__);
 		return -ENOMEM;
 	}
 
-	if (cmd != NULL) {
-		if (cmd->state < QLA_TGT_STATE_PROCESSED) {
-			ql_dbg(ql_dbg_tgt, vha, 0xe051,
-			    "qla_target(%d): Terminating cmd %p with "
-			    "incorrect state %d\n", vha->vp_idx, cmd,
-			    cmd->state);
-		} else
-			ret = 1;
-	}
-
 	qpair->tgt_counters.num_term_xchg_sent++;
-	pkt->entry_count = 1;
-	pkt->handle = QLA_TGT_SKIP_HANDLE | CTIO_COMPLETION_HANDLE_MARK;
 
-	ctio24 = (struct ctio7_to_24xx *)pkt;
 	ctio24->entry_type = CTIO_TYPE7;
-	ctio24->nport_handle = cpu_to_le16(CTIO7_NHANDLE_UNRECOGNIZED);
+	ctio24->entry_count = 1;
+	ctio24->handle = QLA_TGT_SKIP_HANDLE | CTIO_COMPLETION_HANDLE_MARK;
+	ctio24->nport_handle = cpu_to_le16(loop_id);
 	ctio24->timeout = cpu_to_le16(QLA_TGT_TIMEOUT);
 	ctio24->vp_index = vha->vp_idx;
 	ctio24->initiator_id = be_id_to_le(atio->u.isp24.fcp_hdr.s_id);
@@ -3765,7 +3777,7 @@ static int __qlt_send_term_exchange(struct qla_qpair *qpair,
 		qpair->reqq_start_iocbs(qpair);
 	else
 		qla2x00_start_iocbs(vha, qpair->req);
-	return ret;
+	return 0;
 }
 
 /*
@@ -5977,7 +5989,7 @@ static void qlt_handle_abts_completion(struct scsi_qla_host *vha,
 		if (le32_to_cpu(entry->error_subcode1) == 0x1E &&
 		    le32_to_cpu(entry->error_subcode2) == 0) {
 			if (qlt_chk_unresolv_exchg(vha, rsp->qpair, entry)) {
-				ha->tgt.tgt_ops->free_mcmd(mcmd);
+				qlt_free_ul_mcmd(ha, mcmd);
 				return;
 			}
 			qlt_24xx_retry_term_exchange(vha, rsp->qpair,
@@ -5988,10 +6000,10 @@ static void qlt_handle_abts_completion(struct scsi_qla_host *vha,
 			    vha->vp_idx, entry->compl_status,
 			    entry->error_subcode1,
 			    entry->error_subcode2);
-			ha->tgt.tgt_ops->free_mcmd(mcmd);
+			qlt_free_ul_mcmd(ha, mcmd);
 		}
 	} else if (mcmd) {
-		ha->tgt.tgt_ops->free_mcmd(mcmd);
+		qlt_free_ul_mcmd(ha, mcmd);
 	}
 }
 

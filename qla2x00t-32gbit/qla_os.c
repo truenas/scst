@@ -1920,12 +1920,6 @@ __qla2x00_abort_all_cmds(struct qla_qpair *qp, int res)
 	for (cnt = 1; cnt < req->num_outstanding_cmds; cnt++) {
 		sp = req->outstanding_cmds[cnt];
 		if (sp) {
-			if (qla2x00_chip_is_down(vha)) {
-				req->outstanding_cmds[cnt] = NULL;
-				sp->done(sp, res);
-				continue;
-			}
-
 			switch (sp->cmd_type) {
 			case TYPE_SRB:
 				qla2x00_abort_srb(qp, sp, res, &flags);
@@ -1957,7 +1951,7 @@ __qla2x00_abort_all_cmds(struct qla_qpair *qp, int res)
 				 * Currently, only ABTS response gets on the
 				 * outstanding_cmds[]
 				 */
-				ha->tgt.tgt_ops->free_mcmd(
+				qlt_free_ul_mcmd(ha,
 					(struct qla_tgt_mgmt_cmd *) sp);
 				break;
 			default:
