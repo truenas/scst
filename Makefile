@@ -189,13 +189,11 @@ tags:
 	find . -type f -name "*.[ch]" | ctags --c-kinds=+p --fields=+iaS --extra=+q -e -L-
 
 cov-build:
-	-for d in $(SCST_DIR) $(ISCSI_DIR) $(OLD_QLA_DIR) $(NEW_QLA_DIR) $(SRP_DIR)  \
-		$(SCST_LOCAL_DIR) $(FCST_DIR) $(USR_DIR) $(SCSTADM_DIR); do	     \
-		if [[ $$d = $(OLD_QLA_DIR) || $$d = $(NEW_QLA_DIR) ]]; then	     \
-			BUILD_2X_MODULE=y $(MAKE) -j$$(nproc) -C "$$d" all || break; \
-		else								     \
-			$(MAKE) -j$$(nproc) -C "$$d" all || break;		     \
-		fi								     \
+	-for d in $(SCST_DIR) $(ISCSI_DIR) $(OLD_QLA_DIR) $(NEW_QLA_DIR)   \
+		$(SRP_DIR) $(SCST_LOCAL_DIR) $(FCST_DIR) $(USR_DIR)	   \
+		$(SCSTADM_DIR); do					   \
+		BUILD_2X_MODULE=y CONFIG_SCSI_QLA_FC=y			   \
+		CONFIG_SCSI_QLA2XXX_TARGET=y $(MAKE) -j$$(nproc) -C "$$d"; \
 	done
 
 all clean extraclean install uninstall:
