@@ -154,7 +154,6 @@ extern unsigned int scst_max_dev_cmd_mem;
 
 extern bool scst_forcibly_close_sessions;
 extern bool scst_auto_cm_assignment;
-extern bool scst_async_lun_replace;
 
 extern mempool_t *scst_mgmt_mempool;
 extern mempool_t *scst_mgmt_stub_mempool;
