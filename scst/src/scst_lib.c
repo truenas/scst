@@ -4771,6 +4771,34 @@ out:
 	return res;
 }
 
+struct scst_async_repl_work {
+	struct work_struct work;
+	struct list_head tgt_dev_list;
+};
+
+static void scst_wait_and_free_tgt_devs(struct list_head *tgt_dev_list)
+{
+	struct scst_tgt_dev *tgt_dev, *tt;
+
+	scst_wait_for_tgt_devs(tgt_dev_list);
+	synchronize_rcu();
+
+	mutex_lock(&scst_mutex);
+	list_for_each_entry_safe(tgt_dev, tt, tgt_dev_list,
+				 extra_tgt_dev_list_entry)
+		scst_free_tgt_dev(tgt_dev);
+	mutex_unlock(&scst_mutex);
+}
+
+static void scst_async_repl_work_fn(struct work_struct *work)
+{
+	struct scst_async_repl_work *w =
+		container_of(work, struct scst_async_repl_work, work);
+
+	scst_wait_and_free_tgt_devs(&w->tgt_dev_list);
+	kfree(w);
+}
+
 /* Either add or replace a LUN according to flags argument */
 int scst_acg_repl_lun(struct scst_acg *acg, struct kobject *parent,
 		      struct scst_device *dev, uint64_t lun,
@@ -4778,7 +4806,7 @@ int scst_acg_repl_lun(struct scst_acg *acg, struct kobject *parent,
 {
 	struct scst_acg_dev *acg_dev;
 	bool del_gen_ua = false;
-	struct scst_tgt_dev *tgt_dev, *tt;
+	struct scst_tgt_dev *tgt_dev;
 	struct list_head tgt_dev_list;
 	int res = -EINVAL;
 
@@ -4805,13 +4833,22 @@ int scst_acg_repl_lun(struct scst_acg *acg, struct kobject *parent,
 	}
 	mutex_unlock(&scst_mutex);
 
-	scst_wait_for_tgt_devs(&tgt_dev_list);
-	synchronize_rcu();
+	if (acg_dev && READ_ONCE(scst_async_lun_replace)) {
+		struct scst_async_repl_work *w = kzalloc_obj(*w);
+		if (w) {
+			INIT_WORK(&w->work, scst_async_repl_work_fn);
+			INIT_LIST_HEAD(&w->tgt_dev_list);
+			list_splice_init(&tgt_dev_list, &w->tgt_dev_list);
+			schedule_work(&w->work);
+			goto relock;
+		}
+		/* fall back to synchronous path on allocation failure */
+	}
 
+	scst_wait_and_free_tgt_devs(&tgt_dev_list);
+
+relock:
 	mutex_lock(&scst_mutex);
-	list_for_each_entry_safe(tgt_dev, tt, &tgt_dev_list, extra_tgt_dev_list_entry)
-		scst_free_tgt_dev(tgt_dev);
-
 	if (acg_dev)
 		scst_free_acg_dev(acg_dev);
 
@@ -4829,7 +4866,7 @@ int scst_alloc_add_acg(struct scst_tgt *tgt, const char *acg_name,
 
 	lockdep_assert_held(&scst_mutex);
 
-	acg = kzalloc(sizeof(*acg), GFP_KERNEL);
+	acg = kzalloc_obj(*acg);
 	if (acg == NULL) {
 		PRINT_ERROR("%s", "Allocation of acg failed");
 		res = -ENOMEM;
@@ -4996,7 +5033,7 @@ static void scst_release_acg(struct kref *kref)
 	struct scst_acg_release_work *release_work;
 	bool rc;
 
-	release_work = kmalloc(sizeof(*release_work), GFP_KERNEL | __GFP_NOFAIL);
+	release_work = kmalloc_obj(*release_work, GFP_KERNEL | __GFP_NOFAIL);
 	if (WARN_ON_ONCE(!release_work)) {
 		scst_free_acg(acg);
 		return;
@@ -5784,7 +5821,7 @@ int scst_acg_add_acn(struct scst_acg *acg, const char *name)
 		}
 	}
 
-	acn = kzalloc(sizeof(*acn), GFP_KERNEL);
+	acn = kzalloc_obj(*acn);
 	if (acn == NULL) {
 		PRINT_ERROR("%s", "Unable to allocate scst_acn");
 		res = -ENOMEM;
@@ -5995,7 +6032,7 @@ int scst_prepare_request_sense(struct scst_cmd *orig_cmd)
 
 	TRACE_ENTRY();
 
-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	priv = kzalloc_obj(*priv);
 	if (!priv)
 		goto out;
 
@@ -6698,7 +6735,7 @@ static int scst_ws_sg_init(struct scatterlist **ws_sg, int ws_sg_cnt,
 	struct scatterlist *sg;
 	int i;
 
-	*ws_sg = kmalloc_array(ws_sg_cnt, sizeof(**ws_sg), GFP_KERNEL);
+	*ws_sg = kmalloc_objs(**ws_sg, ws_sg_cnt);
 	if (*ws_sg == NULL) {
 		PRINT_ERROR("Unable to alloc sg for %d entries", ws_sg_cnt);
 		return -ENOMEM;
@@ -7148,7 +7185,7 @@ enum scst_exec_res scst_cmp_wr_local(struct scst_cmd *cmd)
 	}
 
 	/* ToDo: HWALIGN'ed kmem_cache */
-	cwrp = kzalloc(sizeof(*cwrp), GFP_KERNEL);
+	cwrp = kzalloc_obj(*cwrp);
 	if (cwrp == NULL) {
 		PRINT_ERROR("Unable to allocate cwr_priv (size %zd, cmd %p)",
 			sizeof(*cwrp), cmd);
@@ -8207,7 +8244,7 @@ static struct blk_kern_sg_work *blk_copy_kern_sg(struct request_queue *q,
 	struct blk_kern_sg_work *bw;
 
 	res = -ENOMEM;
-	bw = kzalloc(sizeof(*bw), gfp_mask);
+	bw = kzalloc_obj(*bw, gfp_mask);
 	if (bw == NULL)
 		goto err;
 
@@ -8808,11 +8845,6 @@ out:
 	return res;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0) &&	\
-	!defined(CONFIG_SUSE_KERNEL)
-static void scsi_end_async(struct request *req, int error)
-#else
-
 /*
  * See also commit de671d6116b5 ("block: change request end_io handler to pass
  * back a return value") # v6.1.
@@ -8825,7 +8857,17 @@ static void scsi_end_async(struct request *req, int error)
 #define RQ_END_IO_RET enum rq_end_io_ret
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0) &&	\
+	!defined(CONFIG_SUSE_KERNEL)
+static RQ_END_IO_RET scsi_end_async(struct request *req, int error)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 static RQ_END_IO_RET scsi_end_async(struct request *req, blk_status_t error)
+#else
+/*
+ * See also commit 5e2fde1a9433 ("block: pass io_comp_batch to rq_end_io_fn callback") # v7.0.
+ */
+static RQ_END_IO_RET scsi_end_async(struct request *req, blk_status_t error,
+				    const struct io_comp_batch *iob)
 #endif
 {
 	struct scsi_io_context *sioc = req->end_io_data;
@@ -14630,7 +14672,7 @@ static int scst_parse_unmap_descriptors(struct scst_cmd *cmd)
 	if (cnt == 0)
 		goto out_put;
 
-	pd = kcalloc(cnt, sizeof(*pd), GFP_KERNEL);
+	pd = kzalloc_objs(*pd, cnt);
 	if (pd == NULL) {
 		PRINT_ERROR("Unable to kmalloc UNMAP %d descriptors", cnt+1);
 		scst_set_busy(cmd);

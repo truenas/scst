@@ -1688,13 +1688,28 @@ skip_rio:
 
 			/* Port logout */
 			fcport = qla2x00_find_fcport_by_loopid(vha, mb[1]);
-			if (!fcport)
+			if (!fcport) {
+				ql_dbg(ql_dbg_async, vha, 0x5011,
+					"Could not find fcport:%04x %04x %04x\n",
+					mb[1], mb[2], mb[3]);
 				break;
-			if (atomic_read(&fcport->state) != FCS_ONLINE)
+			}
+
+			if (atomic_read(&fcport->state) != FCS_ONLINE) {
+				ql_dbg(ql_dbg_async, vha, 0x5012,
+					"Port state is not online State:0x%x \n",
+					atomic_read(&fcport->state));
+				ql_dbg(ql_dbg_async, vha, 0x5012,
+					"Scheduling session for deletion \n");
+				fcport->logout_on_delete = 0;
+				qlt_schedule_sess_for_deletion(fcport);
 				break;
+			}
+
 			ql_dbg(ql_dbg_async, vha, 0x508a,
 			    "Marking port lost loopid=%04x portid=%06x.\n",
 			    fcport->loop_id, fcport->d_id.b24);
+
 			if (qla_ini_mode_enabled(vha)) {
 				fcport->logout_on_delete = 0;
 				qlt_schedule_sess_for_deletion(fcport);
@@ -4544,8 +4559,7 @@ qla24xx_enable_msix(struct qla_hw_data *ha, struct rsp_que *rsp)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
 	struct msix_entry *entries;
 
-	entries = kcalloc(ha->msix_count, sizeof(struct msix_entry),
-			  GFP_KERNEL);
+	entries = kzalloc_objs(struct msix_entry, ha->msix_count);
 	if (!entries) {
 		ql_log(ql_log_warn, vha, 0x00bc,
 		       "Failed to allocate memory for msix_entry.\n");
@@ -4647,9 +4661,7 @@ msix_failed:
 #else
 	vha->irq_offset = min_vecs;
 #endif
-	ha->msix_entries = kcalloc(ha->msix_count,
-				   sizeof(struct qla_msix_entry),
-				   GFP_KERNEL);
+	ha->msix_entries = kzalloc_objs(struct qla_msix_entry, ha->msix_count);
 	if (!ha->msix_entries) {
 		ql_log(ql_log_fatal, vha, 0x00c8,
 		    "Failed to allocate memory for ha->msix_entries.\n");
