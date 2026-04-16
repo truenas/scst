@@ -346,7 +346,7 @@ int scst_alloc_sysfs_work(int (*sysfs_work_fn)(struct scst_sysfs_work_item *),
 
 	*res_work = NULL;
 
-	work = kzalloc(sizeof(*work), GFP_KERNEL);
+	work = kzalloc_obj(*work);
 	if (!work) {
 		PRINT_ERROR("Unable to alloc sysfs work (size %zd)",
 			    sizeof(*work));
@@ -5720,7 +5720,7 @@ int scst_acn_sysfs_create(struct scst_acn *acn)
 
 	acn->acn_attr = NULL;
 
-	attr = kzalloc(sizeof(*attr), GFP_KERNEL);
+	attr = kzalloc_obj(*attr);
 	if (!attr) {
 		PRINT_ERROR("Unable to allocate attributes for initiator '%s'",
 			    acn->name);
@@ -7084,6 +7084,28 @@ out:
 static struct kobj_attribute scst_measure_latency_attr =
 	__ATTR(measure_latency, 0644, scst_measure_latency_show, scst_measure_latency_store);
 
+static ssize_t scst_async_lun_replace_show(struct kobject *kobj,
+					   struct kobj_attribute *attr,
+					   char *buf)
+{
+	return sysfs_emit(buf, "%d\n", READ_ONCE(scst_async_lun_replace) ? 1 : 0);
+}
+
+static ssize_t scst_async_lun_replace_store(struct kobject *kobj,
+					    struct kobj_attribute *attr,
+					    const char *buf, size_t count)
+{
+	bool val;
+
+	if (kstrtobool(buf, &val))
+		return -EINVAL;
+	WRITE_ONCE(scst_async_lun_replace, val);
+	return count;
+}
+
+static struct kobj_attribute scst_async_lun_replace_attr =
+	__ATTR(async_lun_replace, 0644, scst_async_lun_replace_show, scst_async_lun_replace_store);
+
 static ssize_t scst_threads_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	ssize_t ret;
@@ -7658,6 +7680,7 @@ static struct kobj_attribute scst_cluster_name_attr =
 
 static struct attribute *scst_sysfs_root_def_attrs[] = {
 	&scst_measure_latency_attr.attr,
+	&scst_async_lun_replace_attr.attr,
 	&scst_threads_attr.attr,
 	&scst_setup_id_attr.attr,
 	&scst_max_tasklet_cmd_attr.attr,
@@ -7770,7 +7793,7 @@ int scst_sysfs_user_add_info(struct scst_sysfs_user_info **out_info)
 
 	TRACE_ENTRY();
 
-	info = kzalloc(sizeof(*info), GFP_KERNEL);
+	info = kzalloc_obj(*info);
 	if (!info) {
 		PRINT_ERROR("Unable to allocate sysfs user info (size %zd)",
 			    sizeof(*info));

@@ -25,6 +25,7 @@
 #ifndef INSIDE_KERNEL_TREE
 #include <linux/version.h>
 #endif
+#include <linux/kernel.h>
 #include <linux/wait.h>
 #include <linux/aio.h>
 #include <linux/file.h>
@@ -56,6 +57,9 @@
 #include <linux/falloc.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 #include <linux/sched/signal.h>
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+#include <linux/hex.h>
 #endif
 
 #define LOG_PREFIX			"dev_vdisk"
@@ -3057,8 +3061,7 @@ static bool vdisk_alloc_async_bvec(struct scst_cmd *cmd,
 		return true;
 	}
 
-	p->async.bvec = kmalloc_array(n, sizeof(*p->async.bvec),
-				      cmd->cmd_gfp_mask);
+	p->async.bvec = kmalloc_objs(*p->async.bvec, n, cmd->cmd_gfp_mask);
 	if (!p->async.bvec) {
 		PRINT_ERROR("Unable to allocate bvec (%d)", n);
 		return false;
@@ -3125,7 +3128,7 @@ static void fileio_async_complete(struct kiocb *iocb, long ret
 		scst_set_cmd_error(cmd,
 				   SCST_LOAD_SENSE(scst_sense_hardw_error));
 	} else if (cmd->do_verify) {
-		struct scst_verify_work *w = kmalloc(sizeof(*w), GFP_ATOMIC);
+		struct scst_verify_work *w = kmalloc_obj(*w, GFP_ATOMIC);
 
 		cmd->do_verify = false;
 		if (w) {
@@ -5066,8 +5069,8 @@ static struct kvec *vdisk_alloc_sync_kvec(struct scst_cmd *cmd,
 		/* It can't be called in atomic context */
 		p->sync.kvec = kvec_segs <= ARRAY_SIZE(p->sync.small_kvec) ?
 			p->sync.small_kvec :
-			kmalloc_array(kvec_segs, sizeof(*p->sync.kvec),
-				      cmd->cmd_gfp_mask);
+			kmalloc_objs(*p->sync.kvec, kvec_segs,
+				     cmd->cmd_gfp_mask);
 		if (!p->sync.kvec) {
 			PRINT_ERROR("Unable to allocate kvec (%d)", kvec_segs);
 			goto out;
@@ -5567,7 +5570,7 @@ static inline void blockio_check_finish(struct scst_blockio_work *blockio_work)
 	cmd = blockio_work->cmd;
 
 	if (unlikely(cmd->do_verify)) {
-		struct scst_verify_work *w = kmalloc(sizeof(*w), GFP_ATOMIC);
+		struct scst_verify_work *w = kmalloc_obj(*w, GFP_ATOMIC);
 
 		cmd->do_verify = false;
 		if (w) {
