@@ -156,7 +156,11 @@ l_start_service () {
 
 			#Not critical modules, not unloaded on stop.
 			l_load_module crc32c
-			l_load_module crc32c_intel
+			case "$(uname -m)" in
+				x86_64|i686)
+					l_load_module crc32c_intel
+					;;
+			esac
 		fi
 
 		# Start Daemon

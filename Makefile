@@ -80,6 +80,8 @@ ifndef ARCH_TYPE
 ARCH_TYPE := $(shell uname -m)
 endif
 
+DEB_HOST_ARCH := $(shell dpkg-architecture -qDEB_HOST_ARCH 2>/dev/null || echo amd64)
+
 export KVER BUILD_DATE GIT_COMMIT BUILD_NUMBER ARCH_TYPE
 
 RELEASE_VERSION := $(shell echo -n "$$(sed -n 's/^\#define[[:blank:]]SCST_VERSION_NAME[[:blank:]]*\"\([^-]*\).*\"/\1/p' scst/include/scst_const.h)")
@@ -470,9 +472,9 @@ dpkg: ../scst_$(VERSION).orig.tar.gz
 		../*_$(VERSION)-$(DEBIAN_REVISION)_*.ddeb		\
 		../scst_$(VERSION)-$(DEBIAN_REVISION).debian.tar.[gx]z	\
 		../scst_$(VERSION)-$(DEBIAN_REVISION).dsc		\
-		../scst_$(VERSION)-$(DEBIAN_REVISION)_amd64.build	\
-		../scst_$(VERSION)-$(DEBIAN_REVISION)_amd64.buildinfo	\
-		../scst_$(VERSION)-$(DEBIAN_REVISION)_amd64.changes	\
+		../scst_$(VERSION)-$(DEBIAN_REVISION)_$(DEB_HOST_ARCH).build	\
+		../scst_$(VERSION)-$(DEBIAN_REVISION)_$(DEB_HOST_ARCH).buildinfo	\
+		../scst_$(VERSION)-$(DEBIAN_REVISION)_$(DEB_HOST_ARCH).changes	\
 	) &&								\
 	rm -f "$${output_files[@]}" &&					\
 	buildopts=(-uc -us) &&						\
