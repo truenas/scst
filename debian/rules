@@ -72,6 +72,7 @@ build-arch: build
 install:
 	[ -n "$(VERSION)" ] &&						\
 	dh_testdir &&							\
+	make $(PKG_BUILD_MODE) &&					\
 	export PREFIX=/usr &&						\
 	export DESTDIR="$(DESTDIR)" &&					\
 	export BUILD_2X_MODULE=y &&					\
