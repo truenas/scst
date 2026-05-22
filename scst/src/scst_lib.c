@@ -4776,21 +4776,26 @@ struct scst_async_repl_work {
 	struct list_head tgt_dev_list;
 };
 
+static void scst_wait_and_free_tgt_devs(struct list_head *tgt_dev_list)
+{
+	struct scst_tgt_dev *tgt_dev, *tt;
+
+	scst_wait_for_tgt_devs(tgt_dev_list);
+	synchronize_rcu();
+
+	mutex_lock(&scst_mutex);
+	list_for_each_entry_safe(tgt_dev, tt, tgt_dev_list,
+				 extra_tgt_dev_list_entry)
+		scst_free_tgt_dev(tgt_dev);
+	mutex_unlock(&scst_mutex);
+}
+
 static void scst_async_repl_work_fn(struct work_struct *work)
 {
 	struct scst_async_repl_work *w =
 		container_of(work, struct scst_async_repl_work, work);
-	struct scst_tgt_dev *tgt_dev, *tt;
 
-	scst_wait_for_tgt_devs(&w->tgt_dev_list);
-	synchronize_rcu();
-
-	mutex_lock(&scst_mutex);
-	list_for_each_entry_safe(tgt_dev, tt, &w->tgt_dev_list,
-				 extra_tgt_dev_list_entry)
-		scst_free_tgt_dev(tgt_dev);
-	mutex_unlock(&scst_mutex);
-
+	scst_wait_and_free_tgt_devs(&w->tgt_dev_list);
 	kfree(w);
 }
 
@@ -4801,7 +4806,7 @@ int scst_acg_repl_lun(struct scst_acg *acg, struct kobject *parent,
 {
 	struct scst_acg_dev *acg_dev;
 	bool del_gen_ua = false;
-	struct scst_tgt_dev *tgt_dev, *tt;
+	struct scst_tgt_dev *tgt_dev;
 	struct list_head tgt_dev_list;
 	int res = -EINVAL;
 
@@ -4841,17 +4846,10 @@ int scst_acg_repl_lun(struct scst_acg *acg, struct kobject *parent,
 		/* fall back to synchronous path on allocation failure */
 	}
 
-	scst_wait_for_tgt_devs(&tgt_dev_list);
-	synchronize_rcu();
-
-	mutex_lock(&scst_mutex);
-	list_for_each_entry_safe(tgt_dev, tt, &tgt_dev_list, extra_tgt_dev_list_entry)
-		scst_free_tgt_dev(tgt_dev);
-	goto free_acg_dev;
+	scst_wait_and_free_tgt_devs(&tgt_dev_list);
 
 relock:
 	mutex_lock(&scst_mutex);
-free_acg_dev:
 	if (acg_dev)
 		scst_free_acg_dev(acg_dev);
 
