@@ -1721,7 +1721,25 @@ static inline struct kmem_cache *kmem_cache_create_usercopy(const char *name,
 /*
  * See also commit 2932ba8d9c99 ("slab: Introduce kmalloc_obj() and family") # v7.0.
  * See also commit e4c8b46b924e ("slab: Introduce kmalloc_flex() and family") # v7.0.
+ *
+ * Stable kernels that picked up commit 3bf5e19c804d ("slab: Introduce
+ * kmalloc_obj() and family") provide these macros with a fixed GFP argument
+ * and cannot serve SCST's variadic default-GFP call sites, so drop the
+ * kernel-supplied definitions when present and let SCST's versions win.
+ * The _flex family and default_gfp() helper are SCST-only and are unaffected.
  */
+#ifdef kmalloc_obj
+#undef __alloc_objs
+#undef kmalloc_obj
+#undef kmalloc_objs
+#undef kzalloc_obj
+#undef kzalloc_objs
+#undef kvmalloc_obj
+#undef kvmalloc_objs
+#undef kvzalloc_obj
+#undef kvzalloc_objs
+#endif
+
 #define __alloc_objs(KMALLOC, GFP, TYPE, COUNT)				\
 ({									\
 	const size_t __obj_size = size_mul(sizeof(TYPE), COUNT);	\
