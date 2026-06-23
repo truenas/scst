@@ -281,6 +281,7 @@ my $CONFIGFILE;
 my $_DEBUG_;
 my $_NOPROMPT_;
 my $_CONT_ON_ERR_;
+my $_PRESERVE_CLUSTER_MODE_;
 
 my %CURRENT;
 
@@ -485,6 +486,7 @@ sub getArgs {
 			    'nonkey'		=> \$nonkey,
 			    'noprompt'		=> \$_NOPROMPT_,
 			    'cont_on_err'       => \$_CONT_ON_ERR_,
+			    'preserve_cluster_mode' => \$_PRESERVE_CLUSTER_MODE_,
 			    'force'		=> \$force,
 			    'dumpAttrs'		=> \$dumpAttrs,
 			    'debug'             => \$_DEBUG_))
@@ -2300,6 +2302,12 @@ sub applyConfigDevices {
 
 						if ($deletions) {
 							print "\t  -> Closing and re-opening with new attributes.\n";
+							if ($_PRESERVE_CLUSTER_MODE_ &&
+							    !defined($$create_attrs{'cluster_mode'}) &&
+							    defined($$old_create_attrs{'cluster_mode'}->{'keys'}->{'0'}->{'value'})) {
+								$$create_attrs{'cluster_mode'} =
+								    $$old_create_attrs{'cluster_mode'}->{'keys'}->{'0'}->{'value'};
+							}
 							closeDevice($handler, $device, $deletions);
 							openDevice($handler, $device, $create_attrs);
 							$changes += 2;
@@ -2945,6 +2953,7 @@ sub compareToKeyAttribute {
 	}
 
 	foreach my $attr (keys %{$second}) {
+		next if ($_PRESERVE_CLUSTER_MODE_ && $attr eq 'cluster_mode');
 		if (defined($$second{$attr}->{'keys'}) && !defined($$first{$attr})) {
 			return TRUE;
 		}
