@@ -1226,6 +1226,13 @@ static int qlt_reset(struct scsi_qla_host *vha, void *iocb, int mcmd)
 	struct imm_ntfy_from_isp *n = (struct imm_ntfy_from_isp *)iocb;
 	unsigned long flags;
 
+	if (unlikely(ha->tgt.tgt_ops == NULL)) {
+		ql_dbg(ql_dbg_tgt, vha, 0xffff,
+		    "qla_target(%d): reset for mcmd %x, but no tgt_ops\n",
+		    vha->vp_idx, mcmd);
+		return -ESRCH;
+	}
+
 	loop_id = le16_to_cpu(n->u.isp24.nport_handle);
 	if (loop_id == 0xFFFF) {
 		/* Global event */
@@ -2132,6 +2139,15 @@ static void qlt_24xx_handle_abts(struct scsi_qla_host *vha,
 	be_id_t s_id;
 	int rc;
 	unsigned long flags;
+
+	if (unlikely(ha->tgt.tgt_ops == NULL)) {
+		ql_dbg(ql_dbg_tgt_mgt, vha, 0xffff,
+		    "qla_target(%d): ABTS: no tgt_ops, rejecting\n",
+		    vha->vp_idx);
+		qlt_24xx_send_abts_resp(ha->base_qpair, abts, FCP_TMF_REJECTED,
+		    false);
+		return;
+	}
 
 	if (le32_to_cpu(abts->fcp_hdr_le.parameter) & ABTS_PARAM_ABORT_SEQ) {
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xf053,
@@ -6822,6 +6838,11 @@ static void qlt_24xx_atio_pkt(struct scsi_qla_host *vha,
 		    "ATIO pkt, but no tgt (ha %p)", ha);
 		return;
 	}
+	if (unlikely(ha->tgt.tgt_ops == NULL)) {
+		ql_dbg(ql_dbg_tgt, vha, 0xffff,
+		    "ATIO pkt, but no tgt_ops (ha %p)", ha);
+		return;
+	}
 	/*
 	 * In tgt_stop mode we also should allow all requests to pass.
 	 * Otherwise, some commands can stuck.
@@ -7026,6 +7047,12 @@ static void qlt_response_pkt(struct scsi_qla_host *vha,
 	if (unlikely(tgt == NULL)) {
 		ql_dbg(ql_dbg_tgt, vha, 0xe05d,
 		    "qla_target(%d): Response pkt %x received, but no tgt (ha %p)\n",
+		    vha->vp_idx, pkt->entry_type, vha->hw);
+		return;
+	}
+	if (unlikely(vha->hw->tgt.tgt_ops == NULL)) {
+		ql_dbg(ql_dbg_tgt, vha, 0xffff,
+		    "qla_target(%d): Response pkt %x received, but no tgt_ops (ha %p)\n",
 		    vha->vp_idx, pkt->entry_type, vha->hw);
 		return;
 	}
