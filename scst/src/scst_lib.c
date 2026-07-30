@@ -7063,12 +7063,11 @@ static void scst_cwr_write_cmd_finished(struct scst_cmd *cmd)
 
 		TRACE_DBG("WRITE cmd %p (cwr cmd %p) finished not successfully",
 			cmd, cwr_cmd);
-		sBUG_ON(cmd->resp_data_len != 0);
-		if (cmd->status == SAM_STAT_CHECK_CONDITION)
+		if (cmd->status == SAM_STAT_CHECK_CONDITION &&
+		    scst_sense_valid(cmd->sense))
 			rc = scst_set_cmd_error_sense(cwr_cmd, cmd->sense,
 				cmd->sense_valid_len);
 		else {
-			sBUG_ON(cmd->sense != NULL);
 			rc = scst_set_cmd_error_status(cwr_cmd, cmd->status);
 		}
 		if (rc != 0) {
@@ -7100,12 +7099,11 @@ static void scst_cwr_read_cmd_finished(struct scst_cmd *cmd)
 	if (cmd->status != 0) {
 		TRACE_DBG("Read cmd %p (cwr cmd %p) finished not successfully",
 			cmd, cwr_cmd);
-		sBUG_ON(cmd->resp_data_len != 0);
-		if (cmd->status == SAM_STAT_CHECK_CONDITION)
+		if (cmd->status == SAM_STAT_CHECK_CONDITION &&
+		    scst_sense_valid(cmd->sense))
 			rc = scst_set_cmd_error_sense(cwr_cmd, cmd->sense,
 				cmd->sense_valid_len);
 		else {
-			sBUG_ON(cmd->sense != NULL);
 			rc = scst_set_cmd_error_status(cwr_cmd, cmd->status);
 		}
 		if (rc != 0) {
