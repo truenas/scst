@@ -2055,8 +2055,13 @@ static int sqa_enable_tgt(struct scst_tgt *scst_tgt, bool enable)
 		   vha->port_name[6], vha->port_name[7]);
 
 	if (enable) {
-		qlt_lport_register(sqa_tgt, wwn_to_u64(vha->port_name),
+		rc = qlt_lport_register(sqa_tgt, wwn_to_u64(vha->port_name),
 		    0, 0, sqa_lport_callback);
+		if (rc != 0) {
+			PRINT_ERROR("sqatgt(%ld/%d): Unable to register lport for target pwwn=%8phC rc=%d",
+				    vha->host_no, vha->vp_idx, vha->port_name, rc);
+			return rc;
+		}
 		qlt_enable_vha(vha);
 	} else {
 		rc = qlt_stop_phase1(tgt);
