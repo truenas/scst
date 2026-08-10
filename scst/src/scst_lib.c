@@ -4165,13 +4165,15 @@ static bool __scst_is_relative_target_port_id_unique(uint16_t id,
 			 * tgt_list until late in scst_unregister_target(),
 			 * after tgtt->release() has freed the driver's
 			 * per-target data, so is_target_enabled() must not be
-			 * called for it. Its rel_tgt_id is being released
-			 * anyway, so don't count it as a conflict either.
+			 * called for it. Its rel_tgt_id stays visible in
+			 * REPORT TARGET PORT GROUPS data until
+			 * scst_tg_tgt_remove_by_tgt(), so keep treating the
+			 * target as enabled, i.e. its id as a conflict, until
+			 * it leaves these lists.
 			 */
-			if (tgt->tgt_unregistering)
-				continue;
-			if ((tgt->tgtt->is_target_enabled != NULL) &&
-			     !tgt->tgtt->is_target_enabled(tgt))
+			if (!tgt->tgt_unregistering &&
+			    tgt->tgtt->is_target_enabled != NULL &&
+			    !tgt->tgtt->is_target_enabled(tgt))
 				continue;
 			if (id == tgt->rel_tgt_id) {
 				res = false;
