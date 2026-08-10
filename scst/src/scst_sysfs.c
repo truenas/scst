@@ -660,11 +660,24 @@ static void scst_ungrab_tgt_ptr(struct scst_tgt *tgt)
 	TRACE_EXIT();
 }
 
-/* scst_mutex supposed to be locked */
+/*
+ * scst_mutex supposed to be locked. Reports an unregistering target as absent:
+ * such a target stays on tgt_list until late in scst_unregister_target(), after
+ * tgtt->release() has freed the driver's per-target data, while the mgmt works
+ * calling this helper can reach driver callbacks (report_aen(),
+ * close_session()) that must not run anymore. The flag is set under scst_mutex
+ * before release() is invoked, so the check is race-free here.
+ */
 static int scst_check_tgt_acg_ptrs(struct scst_tgt *tgt, struct scst_acg *acg)
 {
 	int res = 0;
 	struct scst_tgt_template *tgtt;
+
+	if (tgt->tgt_unregistering) {
+		TRACE_DBG("Tgt %p is being unregistered", tgt);
+		res = -ENOENT;
+		goto out;
+	}
 
 	list_for_each_entry(tgtt, &scst_template_list, scst_template_list_entry) {
 		struct scst_tgt *t;
@@ -1937,19 +1950,6 @@ static int __scst_acg_process_cpu_mask_store(struct scst_tgt *tgt, struct scst_a
 	/* Check if tgt and acg not already freed while we were coming here */
 	if (scst_check_tgt_acg_ptrs(tgt, acg) != 0)
 		goto out_unlock;
-
-	/*
-	 * The tgt stays on its template's tgt_list until late in
-	 * scst_unregister_target(), long after tgtt->release() has freed the
-	 * driver's per-target data, so the check above is not enough to make
-	 * the report_aen() call below safe. The flag is set under scst_mutex
-	 * before release() is invoked, and we hold scst_mutex here.
-	 */
-	if (tgt->tgt_unregistering) {
-		TRACE_DBG("Ignoring stale cpu_mask write for tgt %p: unregistration in progress",
-			  tgt);
-		goto out_unlock;
-	}
 
 	cpumask_copy(&acg->acg_cpu_mask, cpu_mask);
 
