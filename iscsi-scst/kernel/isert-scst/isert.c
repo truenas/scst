@@ -155,7 +155,16 @@ static int isert_process_all_writes(struct iscsi_conn *conn)
 	while ((cmnd = iscsi_get_send_cmnd(conn)) != NULL) {
 		isert_update_len_sn(cmnd);
 		conn_get(conn);
-		isert_pdu_tx(cmnd);
+		if (unlikely(isert_pdu_tx(cmnd))) {
+			/*
+			 * Nothing was posted, so no completion will release
+			 * cmnd. Mirrors the release in isert_pdu_sent().
+			 */
+			if (likely(cmnd->parent_req)) {
+				rsp_cmnd_release(cmnd);
+				conn_put(conn);
+			}
+		}
 	}
 
 	TRACE_EXIT_RES(res);
@@ -254,6 +263,8 @@ static void isert_send_data_rsp(struct iscsi_cmnd *req, u8 *sense,
 				int sense_len, u8 status, int is_send_status)
 {
 	struct iscsi_cmnd *rsp;
+	struct iscsi_conn *conn;
+	int err;
 
 	TRACE_ENTRY();
 
@@ -263,11 +274,29 @@ static void isert_send_data_rsp(struct iscsi_cmnd *req, u8 *sense,
 
 	isert_update_len_sn(rsp);
 
-	conn_get(rsp->conn);
+	conn = rsp->conn;
+
+	/*
+	 * Once posted, rsp's reference is owned by the send completion
+	 * (isert_pdu_sent()/isert_pdu_err()). This path bypasses
+	 * iscsi_get_send_cmnd(), so mark the rsp as being processed here,
+	 * or req_cmnd_release_force() will consider it not sent yet and
+	 * put the same reference while the WRs are still posted.
+	 */
+	spin_lock_bh(&conn->write_list_lock);
+	rsp->write_processing_started = 1;
+	spin_unlock_bh(&conn->write_list_lock);
+
+	conn_get(conn);
 	if (status != SAM_STAT_CHECK_CONDITION)
-		isert_send_data_in(req, rsp);
+		err = isert_send_data_in(req, rsp);
 	else
-		isert_pdu_tx(rsp);
+		err = isert_pdu_tx(rsp);
+	if (unlikely(err)) {
+		/* Nothing was posted, so no completion will release rsp */
+		rsp_cmnd_release(rsp);
+		conn_put(conn);
+	}
 
 	TRACE_EXIT();
 }
@@ -367,6 +396,9 @@ int isert_data_in_sent(struct iscsi_cmnd *din)
 void isert_pdu_err(struct iscsi_cmnd *pdu)
 {
 	struct iscsi_conn *conn = pdu->conn;
+
+	if (unlikely(!conn)) /* pdu was already released and recycled */
+		return;
 
 	if (!conn->session) /* we are still in login phase */
 		return;
