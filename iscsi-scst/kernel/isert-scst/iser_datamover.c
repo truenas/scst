@@ -163,6 +163,12 @@ void isert_release_tx_pdu(struct iscsi_cmnd *iscsi_pdu)
 						struct isert_conn, iscsi);
 
 	isert_tx_pdu_init_iscsi(isert_pdu);
+	/*
+	 * Keep pool PDUs pointing at their connection, like
+	 * isert_reinit_rx_pdu() does, so a late error completion
+	 * finds valid state instead of a NULL conn.
+	 */
+	iscsi_pdu->conn = &isert_conn->iscsi;
 
 	spin_lock(&isert_conn->tx_lock);
 	list_move(&isert_pdu->pool_node, &isert_conn->tx_free_list);
