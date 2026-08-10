@@ -4160,6 +4160,16 @@ static bool __scst_is_relative_target_port_id_unique(uint16_t id,
 		list_for_each_entry(tgt, &tgtt->tgt_list, tgt_list_entry) {
 			if (tgt == t)
 				continue;
+			/*
+			 * A target that has started unregistering stays on
+			 * tgt_list until late in scst_unregister_target(),
+			 * after tgtt->release() has freed the driver's
+			 * per-target data, so is_target_enabled() must not be
+			 * called for it. Its rel_tgt_id is being released
+			 * anyway, so don't count it as a conflict either.
+			 */
+			if (tgt->tgt_unregistering)
+				continue;
 			if ((tgt->tgtt->is_target_enabled != NULL) &&
 			     !tgt->tgtt->is_target_enabled(tgt))
 				continue;
