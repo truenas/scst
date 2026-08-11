@@ -1716,7 +1716,12 @@ static void q2t_target_stop(struct scst_tgt *scst_tgt)
 	return;
 }
 
-/* Must be called under tgt_host_action_mutex or q2t_unreg_rwsem write locked */
+/*
+ * Must be called WITHOUT tgt_host_action_mutex held: it is acquired here to
+ * serialize against concurrent host actions. Reached only via
+ * scst_unregister_target(), either with q2t_unreg_rwsem read locked
+ * (REMOVE_TARGET host action) or write locked (q2t_exit()).
+ */
 static int q2t_target_release(struct scst_tgt *scst_tgt)
 {
 	struct q2t_tgt *tgt = (struct q2t_tgt *)scst_tgt_get_tgt_priv(scst_tgt);
@@ -1724,12 +1729,16 @@ static int q2t_target_release(struct scst_tgt *scst_tgt)
 
 	TRACE_ENTRY();
 
+	mutex_lock(&vha->tgt_host_action_mutex);
+
 	q2t_target_stop(scst_tgt);
 
 	cancel_work_sync(&tgt->rscn_reg_work);
 
 	vha->q2t_tgt = NULL;
 	scst_tgt_set_tgt_priv(scst_tgt, NULL);
+
+	mutex_unlock(&vha->tgt_host_action_mutex);
 
 	TRACE_MGMT_DBG("Release of tgt %p finished", tgt);
 
@@ -6161,7 +6170,18 @@ static int q2t_add_target(scsi_qla_host_t *vha)
 
 	TRACE_DBG("Registering target for host %ld(%p)", vha->host_no, vha);
 
-	sBUG_ON((vha->q2t_tgt != NULL) || (vha->tgt != NULL));
+	/*
+	 * Not a BUG: a REMOVE_TARGET action for this host may be inside
+	 * scst_unregister_target() with tgt_host_action_mutex dropped (see
+	 * q2t_host_action()), so a racing ADD_TARGET can legitimately find
+	 * the old target still present.
+	 */
+	if (vha->q2t_tgt != NULL || vha->tgt != NULL) {
+		PRINT_ERROR("qla2x00t(%ld): target already exists (concurrent removal in progress?)",
+			    vha->host_no);
+		res = -EEXIST;
+		goto out;
+	}
 
 	tgt = kmem_cache_zalloc(q2t_tgt_cachep, GFP_KERNEL);
 	if (tgt == NULL) {
@@ -6278,7 +6298,13 @@ out_free:
 	goto out;
 }
 
-/* Must be called under tgt_host_action_mutex */
+/*
+ * Must be called with q2t_unreg_rwsem read locked and WITHOUT
+ * tgt_host_action_mutex held: scst_unregister_target() waits for queued
+ * enable/disable sysfs works, and those take tgt_host_action_mutex
+ * (q2t_enable_tgt() -> q2t_host_action()), so holding it here would
+ * deadlock. q2t_target_release() acquires it for the actual teardown.
+ */
 static int q2t_remove_target(scsi_qla_host_t *vha)
 {
 	TRACE_ENTRY();
@@ -6316,7 +6342,18 @@ static int q2t_host_action(scsi_qla_host_t *vha,
 		res = q2t_add_target(vha);
 		break;
 	case REMOVE_TARGET:
+		/*
+		 * Drop the mutex across the unregistration, or the wait for
+		 * enable/disable sysfs works inside scst_unregister_target()
+		 * would deadlock against a work blocked on this mutex in
+		 * q2t_host_action(). q2t_unreg_rwsem (held) keeps q2t_exit()
+		 * away, and q2t_target_release() reacquires the mutex for the
+		 * teardown itself. A last-gasp enable slipping in here is
+		 * stopped again by q2t_target_stop() in the release callback.
+		 */
+		mutex_unlock(&vha->tgt_host_action_mutex);
 		res = q2t_remove_target(vha);
+		mutex_lock(&vha->tgt_host_action_mutex);
 		break;
 	case ENABLE_TARGET_MODE:
 	{
