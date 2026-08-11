@@ -1705,6 +1705,15 @@ struct scst_tgt {
 	unsigned tgt_hw_dif_same_sg_layout_required:1;
 
 	/*
+	 * Set under scst_mutex when unregistration (or registration failure
+	 * cleanup) has started for this target. Makes queued sysfs works that
+	 * would call into the target driver (enable/disable, rel_tgt_id,
+	 * cpu_mask AENs) no-ops and excludes the target from
+	 * __scst_is_relative_target_port_id_unique() driver callbacks.
+	 */
+	unsigned int tgt_unregistering:1;
+
+	/*
 	 * Maximum SG table size. Needed here, since different cards on the
 	 * same target template can have different SG table limitations.
 	 */
@@ -1742,6 +1751,13 @@ struct scst_tgt {
 	atomic_t tgt_dif_app_failed_tgt, tgt_dif_ref_failed_tgt, tgt_dif_guard_failed_tgt;
 	atomic_t tgt_dif_app_failed_scst, tgt_dif_ref_failed_scst, tgt_dif_guard_failed_scst;
 	atomic_t tgt_dif_app_failed_dev, tgt_dif_ref_failed_dev, tgt_dif_guard_failed_dev;
+
+	/*
+	 * Number of currently executing sysfs works that may call into the
+	 * target driver for this target (enable_target(),
+	 * is_target_enabled()). Protected by scst_mutex.
+	 */
+	int tgt_active_sysfs_works_count;
 
 	/* sysfs release completion */
 	struct completion *tgt_kobj_release_cmpl;
