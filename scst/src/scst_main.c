@@ -357,6 +357,28 @@ out:
 EXPORT_SYMBOL(__scst_register_target_template_non_gpl);
 
 /*
+ * Wait until *pcount, an active sysfs works counter protected by scst_mutex,
+ * drops to zero. Must be called with scst_mutex held; drops and reacquires it
+ * while waiting. The wait is unbounded, since giving up would let a queued
+ * work call into a driver being torn down, so periodically report what is
+ * being waited for instead of hanging silently.
+ */
+static void scst_wait_no_sysfs_works(int *pcount, const char *category, const char *name)
+{
+	unsigned int waited_ms = 0;
+
+	while (*pcount > 0) {
+		if (waited_ms != 0 && waited_ms % 10000 == 0)
+			PRINT_WARNING("Still waiting for %d active sysfs work(s) of %s %s (%u sec)",
+				      *pcount, category, name, waited_ms / 1000);
+		mutex_unlock(&scst_mutex);
+		msleep(100);
+		waited_ms += 100;
+		mutex_lock(&scst_mutex);
+	}
+}
+
+/*
  * scst_unregister_target_template() - unregister target template
  *
  * Target drivers supposed to behave sanely and not call register()
@@ -390,11 +412,8 @@ void scst_unregister_target_template(struct scst_tgt_template *vtt)
 	mutex_unlock(&scst_mutex2);
 
 	/* Wait for outstanding sysfs mgmt calls completed */
-	while (vtt->tgtt_active_sysfs_works_count > 0) {
-		mutex_unlock(&scst_mutex);
-		msleep(100);
-		mutex_lock(&scst_mutex);
-	}
+	scst_wait_no_sysfs_works(&vtt->tgtt_active_sysfs_works_count,
+				 "target template", vtt->name);
 
 	while (!list_empty(&vtt->tgt_list)) {
 		tgt = list_first_entry(&vtt->tgt_list, typeof(*tgt),
@@ -483,8 +502,19 @@ out:
 	return tgt;
 
 out_sysfs_del:
+	/*
+	 * The "enabled" attribute has been visible, so enable/disable works
+	 * holding tgt_kobj references may already be queued or running.
+	 * Mirror scst_unregister_target(): make them no-ops, wait for a
+	 * running one, then wait for all kobject references to be dropped,
+	 * since scst_free_tgt() below frees the embedded kobject too.
+	 */
+	tgt->tgt_unregistering = 1;
+	scst_wait_no_sysfs_works(&tgt->tgt_active_sysfs_works_count,
+				 "target", tgt->tgt_name);
 	mutex_unlock(&scst_mutex);
 	scst_tgt_sysfs_del(tgt);
+	scst_tgt_sysfs_put(tgt);
 	goto out_free_tgt;
 
 out_unlock:
@@ -513,6 +543,20 @@ void scst_unregister_target(struct scst_tgt *tgt)
 	int res;
 
 	TRACE_ENTRY();
+
+	/*
+	 * Deleting the sysfs attributes below stops new "enabled" writes, but
+	 * not "enabled" works already queued: a write times out after 15 sec
+	 * (-EAGAIN) while its work stays queued until a sysfs thread gets to
+	 * it, possibly long after this unregistration has started. Make such
+	 * stale works no-ops and wait for a possibly running one to finish
+	 * before tgt->tgtt->release(tgt) tears the target down.
+	 */
+	mutex_lock(&scst_mutex);
+	tgt->tgt_unregistering = 1;
+	scst_wait_no_sysfs_works(&tgt->tgt_active_sysfs_works_count,
+				 "target", tgt->tgt_name);
+	mutex_unlock(&scst_mutex);
 
 	/*
 	 * Remove the sysfs attributes of a target before invoking
@@ -1645,11 +1689,8 @@ void scst_unregister_virtual_dev_driver(struct scst_dev_type *dev_type)
 	list_del(&dev_type->dev_type_list_entry);
 
 	/* Wait for outstanding sysfs mgmt calls completed */
-	while (dev_type->devt_active_sysfs_works_count > 0) {
-		mutex_unlock(&scst_mutex);
-		msleep(100);
-		mutex_lock(&scst_mutex);
-	}
+	scst_wait_no_sysfs_works(&dev_type->devt_active_sysfs_works_count,
+				 "device handler", dev_type->name);
 
 	mutex_unlock(&scst_mutex);
 
