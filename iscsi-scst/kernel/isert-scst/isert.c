@@ -397,8 +397,18 @@ void isert_pdu_err(struct iscsi_cmnd *pdu)
 {
 	struct iscsi_conn *conn = pdu->conn;
 
-	if (unlikely(!conn)) /* pdu was already released and recycled */
+	if (unlikely(!conn)) {
+		/*
+		 * A PDU was recycled while its WR completion was still
+		 * pending, which the write_processing_started ownership
+		 * fix is supposed to make impossible. The posting's
+		 * conn_get() cannot be balanced from here (the owner is
+		 * unknown), so close_conn() will hang on conn_ref_cnt.
+		 * Trace loudly so the early-release path can be found.
+		 */
+		PRINT_CRIT_ERROR("stale recycled pdu %p in isert_pdu_err", pdu);
 		return;
+	}
 
 	if (!conn->session) /* we are still in login phase */
 		return;
