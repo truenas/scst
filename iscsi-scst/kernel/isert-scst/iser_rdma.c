@@ -672,6 +672,18 @@ static void isert_handle_wc_error(struct ib_wc *wc)
 			if (test_bit(ISERT_DRAINED_RQ, &isert_conn->flags))
 				isert_sched_conn_drained(isert_conn);
 		} else if (!isert_pdu->is_fake_rx) {
+			/*
+			 * A parentless PDU here, other than the login
+			 * response, means a posted response lost its
+			 * references before this completion was reaped.
+			 * isert_pdu_err() will no-op on it, leaving the
+			 * posting's conn_get() unbalanced and close_conn()
+			 * hung on conn_ref_cnt. Trace loudly.
+			 */
+			if (unlikely(!isert_pdu->iscsi.parent_req &&
+				     isert_pdu != isert_conn->login_rsp_pdu))
+				PRINT_CRIT_ERROR("conn:%p pdu:%p parentless SEND error completion, possible stale pdu",
+						 isert_conn, isert_pdu);
 			isert_pdu_err(&isert_pdu->iscsi);
 		}
 		break;
