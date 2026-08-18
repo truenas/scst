@@ -1801,8 +1801,8 @@ int scst_add_threads(struct scst_cmd_threads *cmd_threads,
 		if (tgt_dev != NULL) {
 			int rc;
 			/*
-			 * sess->acg can be NULL here, if called from
-			 * scst_check_reassign_sess()!
+			 * sess->acg may still point to the old acg here,
+			 * if called from scst_check_reassign_sess().
 			 */
 			rc = set_cpus_allowed_ptr(thr->cmd_thread,
 				&tgt_dev->acg_dev->acg->acg_cpu_mask);
