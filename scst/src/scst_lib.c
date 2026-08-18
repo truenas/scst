@@ -3044,8 +3044,11 @@ static void scst_check_reassign_sess(struct scst_session *sess)
 		"acg %s", sess, sess->initiator_name, sess->acg->acg_name,
 		acg->acg_name);
 
+	/*
+	 * Keep the old acg in place until the switch below. The TM path
+	 * reads sess->acg without scst_mutex and must never see NULL.
+	 */
 	old_acg = sess->acg;
-	sess->acg = NULL; /* to catch implicit dependencies earlier */
 
 retry_add:
 	add_failed = false;
@@ -5526,8 +5529,8 @@ static __be16 scst_dif_ip_fn(const void *data, unsigned int len);
 
 /*
  * scst_mutex supposed to be held, there must not be parallel activity in this
- * session. May be invoked from inside scst_check_reassign_sessions() which
- * means that sess->acg can be NULL.
+ * session. May be invoked from inside scst_check_reassign_sessions() in which
+ * case sess->acg may still point to the old acg, so use acg_dev->acg.
  */
 static int scst_alloc_add_tgt_dev(struct scst_session *sess,
 	struct scst_acg_dev *acg_dev, struct scst_tgt_dev **out_tgt_dev)
