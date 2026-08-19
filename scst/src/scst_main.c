@@ -1149,10 +1149,27 @@ static struct scst_device *__scst_lookup_device(struct scsi_device *scsidp)
 	return NULL;
 }
 
+static void scst_dev_del_all_luns(struct scst_device *dev)
+{
+	struct scst_acg_dev *acg_dev;
+
+	lockdep_assert_held(&scst_mutex);
+
+	/*
+	 * scst_acg_del_lun() drops scst_mutex, so concurrent ACG teardown
+	 * can unlink entries. Restart from the list head every iteration.
+	 */
+	while (!list_empty(&dev->dev_acg_dev_list)) {
+		acg_dev = list_first_entry(&dev->dev_acg_dev_list,
+					   struct scst_acg_dev,
+					   dev_acg_dev_list_entry);
+		scst_acg_del_lun(acg_dev->acg, acg_dev->lun, true);
+	}
+}
+
 static void scst_unregister_device(struct scsi_device *scsidp)
 {
 	struct scst_device *dev;
-	struct scst_acg_dev *acg_dev, *aa;
 	DECLARE_COMPLETION_ONSTACK(c);
 
 	TRACE_ENTRY();
@@ -1179,10 +1196,7 @@ static void scst_unregister_device(struct scsi_device *scsidp)
 
 	scst_dg_dev_remove_by_dev(dev);
 
-	list_for_each_entry_safe(acg_dev, aa, &dev->dev_acg_dev_list,
-				 dev_acg_dev_list_entry) {
-		scst_acg_del_lun(acg_dev->acg, acg_dev->lun, true);
-	}
+	scst_dev_del_all_luns(dev);
 
 	dev->remove_completion = &c;
 
@@ -1432,7 +1446,6 @@ void scst_unregister_virtual_device(int id,
 				    void *arg)
 {
 	struct scst_device *d, *dev = NULL;
-	struct scst_acg_dev *acg_dev, *aa;
 	DECLARE_COMPLETION_ONSTACK(c);
 
 	TRACE_ENTRY();
@@ -1464,10 +1477,7 @@ void scst_unregister_virtual_device(int id,
 
 	scst_dg_dev_remove_by_dev(dev);
 
-	list_for_each_entry_safe(acg_dev, aa, &dev->dev_acg_dev_list,
-				 dev_acg_dev_list_entry) {
-		scst_acg_del_lun(acg_dev->acg, acg_dev->lun, true);
-	}
+	scst_dev_del_all_luns(dev);
 
 	dev->remove_completion = &c;
 
