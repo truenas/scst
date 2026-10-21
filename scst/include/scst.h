@@ -1651,6 +1651,14 @@ struct scst_dev_type {
 
 	/* To wait until devt_kobj released */
 	struct completion *devt_kobj_release_compl;
+
+	/*
+	 * Number of devices whose dev->handler points to this dev type.
+	 * Changed under scst_mutex by scst_assign_dev_handler(). Lets
+	 * scst_unregister_dev_driver() wait for devices that are being
+	 * unregistered and are no longer on scst_dev_list.
+	 */
+	atomic_t devt_dev_cnt;
 };
 
 /*
