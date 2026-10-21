@@ -1195,6 +1195,21 @@ static void scst_dev_del_all_luns(struct scst_device *dev)
 	}
 }
 
+static DECLARE_WAIT_QUEUE_HEAD(scst_devt_dev_waitQ);
+
+static void scst_devt_get(struct scst_dev_type *devt)
+{
+	if (devt != &scst_null_devtype)
+		atomic_inc(&devt->devt_dev_cnt);
+}
+
+static void scst_devt_put(struct scst_dev_type *devt)
+{
+	if (devt != &scst_null_devtype &&
+	    atomic_dec_and_test(&devt->devt_dev_cnt))
+		wake_up_all(&scst_devt_dev_waitQ);
+}
+
 static void scst_unregister_device(struct scsi_device *scsidp)
 {
 	struct scst_device *dev;
@@ -1645,6 +1660,17 @@ void scst_unregister_dev_driver(struct scst_dev_type *dev_type)
 	mutex_unlock(&scst_mutex);
 	scst_resume_activity();
 
+	/*
+	 * scst_unregister_device() takes a device off scst_dev_list and drops
+	 * scst_mutex before it switches the device to scst_null_devtype, so
+	 * the loop above can miss a device that still points at dev_type.
+	 * Wait until no device references dev_type anymore. Otherwise the
+	 * dev handler's module, and dev_type with it, can be freed while
+	 * scst_assign_dev_handler() is still using dev->handler.
+	 */
+	wait_event(scst_devt_dev_waitQ,
+		   atomic_read(&dev_type->devt_dev_cnt) == 0);
+
 	scst_devt_sysfs_del(dev_type);
 
 	PRINT_INFO("Device handler \"%s\" for type %d unloaded",
@@ -2017,7 +2043,10 @@ int scst_assign_dev_handler(struct scst_device *dev,
 	scst_stop_dev_threads(dev);
 
 assign:
+	if (dev->handler)
+		scst_devt_put(dev->handler);
 	dev->handler = handler;
+	scst_devt_get(handler);
 	dev->threads_num = handler->threads_num;
 	dev->threads_pool_type = handler->threads_pool_type;
 	dev->max_tgt_dev_commands = handler->max_tgt_dev_commands;
@@ -2083,6 +2112,7 @@ out_detach:
 		TRACE_DBG("%s", "Handler's detach() returned");
 	}
 
+	scst_devt_put(handler);
 	dev->handler = &scst_null_devtype;
 	dev->threads_num = scst_null_devtype.threads_num;
 	dev->threads_pool_type = scst_null_devtype.threads_pool_type;
