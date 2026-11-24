@@ -4579,7 +4579,9 @@ static int __init srpt_init_module(void)
 		goto destroy_wq;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0) &&			\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(6, 18, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 65))
 	srpt_net_ns = kobj_ns_grab_current(KOBJ_NS_TYPE_NET);
 #else
 	srpt_net_ns = to_net_ns(kobj_ns_grab_current(KOBJ_NS_TYPE_NET));
@@ -4627,7 +4629,9 @@ destroy_id:
 		rdma_destroy_id(rdma_cm_id);
 
 drop_ns:
-#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0) &&			\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(6, 18, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 65))
 	kobj_ns_drop(KOBJ_NS_TYPE_NET, srpt_net_ns);
 #else
 	kobj_ns_drop(KOBJ_NS_TYPE_NET, to_ns_common(srpt_net_ns));
@@ -4650,7 +4654,9 @@ static void __exit srpt_cleanup_module(void)
 	if (rdma_cm_id)
 		rdma_destroy_id(rdma_cm_id);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0) &&			\
+	(LINUX_VERSION_CODE >> 8 != KERNEL_VERSION(6, 18, 0) >> 8 ||	\
+	 LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 65))
 	kobj_ns_drop(KOBJ_NS_TYPE_NET, srpt_net_ns);
 #else
 	kobj_ns_drop(KOBJ_NS_TYPE_NET, to_ns_common(srpt_net_ns));
